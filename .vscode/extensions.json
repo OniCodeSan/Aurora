@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "GitHub.vscode-pull-request-github",
+    "eamodio.gitlens",
+    "ms-azuretools.vscode-docker",
+    "ms-vscode.remote-containers",
+    "ms-vscode.vscode-node-azure-pack",
+    "streetsidesoftware.code-spell-checker"
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "frontend-agent: dev server",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/team/app-dev/frontend-agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "backend-agent: docker compose up",
+      "type": "shell",
+      "command": "docker compose up backend",
+      "options": {
+        "cwd": "${workspaceFolder}/team/app-dev/backend-agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "debugger-agent: test & trace",
+      "type": "shell",
+      "command": "npm run test:watch",
+      "options": {
+        "cwd": "${workspaceFolder}/team/app-dev/debugger-agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "project-manager: sync report",
+      "type": "shell",
+      "command": "./scripts/generate-status.sh",
+      "options": {
+        "cwd": "${workspaceFolder}/team/app-dev/project-manager-agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "marketing-agent: campaign build",
+      "type": "shell",
+      "command": "npm run campaign",
+      "options": {
+        "cwd": "${workspaceFolder}/team/app-dev/marketing-agent"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "dataentry-agent: import",
+      "type": "shell",
+      "command": "python ingest.py",
+      "options": {
+        "cwd": "${workspaceFolder}/team/app-dev/dataentry-agent"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+.aurora-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.aurora-card {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,.05);
+}
+
+.aurora-card h2 {
+    margin-top: 0;
+}
+
+.aurora-cron-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 14px;
+}
+
+.aurora-cron-table th,
+.aurora-cron-table td {
+    border-bottom: 1px solid #ececec;
+    padding: 8px 6px;
+}
+
+.aurora-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.aurora-status::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.aurora-status--green {
+    background: #e6ffed;
+    color: #1b7a32;
+}
+.aurora-status--green::before { background: #1b7a32; }
+
+.aurora-status--yellow {
+    background: #fffbea;
+    color: #9c6500;
+}
+.aurora-status--yellow::before { background: #d69e2e; }
+
+.aurora-status--red {
+    background: #ffe8e6;
+    color: #b42318;
+}
+.aurora-status--red::before { background: #e53e3e; }
