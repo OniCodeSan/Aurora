@@ -22,7 +22,7 @@ Oppure incolla le linee manualmente con `crontab -e`.
 | Stock worker | ogni 5 min (offset 2 min) | `docker exec wordpress-worker-1 wp aurora worker --indexer=stock --batch=750 --max-loops=2 --allow-root` |
 | Visibility worker | ogni 15 min | `docker exec wordpress-worker-1 wp aurora worker --indexer=visibility --batch=500 --max-loops=1 --allow-root` |
 | Rebuild completo | ore 03:00 | `docker exec wordpress-worker-1 wp aurora rebuild --indexer=all --allow-root` |
-| Feed receiver (opz.) | ogni ora | `docker exec wordpress-worker-1 wp option update aurora_feed_receiver_url "https://www.contentmug.it/wp-json/wc/store/products" --allow-root` |
+| Feed receiver (opz.) | ogni ora | `docker exec wordpress-worker-1 wp aurora feed poll --allow-root` |
 
 ## 4. Verificare
 - Controlla i log sotto `/var/log/aurora/*.log`.

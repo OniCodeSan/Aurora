@@ -17,5 +17,5 @@
 # Daily rebuild at 03:00 server time
 0 3 * * * docker exec wordpress-worker-1 wp aurora rebuild --indexer=all --allow-root >> /var/log/aurora/rebuild.log 2>&1
 
-# Feed receiver refresh every hour (optional)
-0 * * * * docker exec wordpress-worker-1 wp option update aurora_feed_receiver_url "https://www.contentmug.it/wp-json/wc/store/products" --allow-root >> /var/log/aurora/feed-receiver.log 2>&1
+# Feed receiver polling every hour (optional)
+0 * * * * docker exec wordpress-worker-1 wp aurora feed poll --allow-root >> /var/log/aurora/feed-receiver.log 2>&1

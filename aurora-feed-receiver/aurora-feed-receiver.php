@@ -59,11 +59,43 @@ final class Aurora_Feed_Receiver {
     }
 
     public function run() : void {
-        $url = trim( (string) get_option( self::OPTION_URL, '' ) );
+        $this->record_fetch();
+    }
+
+    /**
+     * Esegue un fetch e salva nel log.
+     *
+     * @param string|null $override_url URL alternativo per questa chiamata.
+     * @return array<string,mixed>|null
+     */
+    public function record_fetch( ?string $override_url = null ) : ?array {
+        $url = $override_url ? trim( $override_url ) : trim( (string) get_option( self::OPTION_URL, '' ) );
         if ( empty( $url ) ) {
-            return;
+            return null;
         }
 
+        $entry = $this->fetch_once( $url );
+        if ( ! $entry ) {
+            return null;
+        }
+
+        $log = get_option( self::OPTION_LOG, [] );
+        if ( ! is_array( $log ) ) {
+            $log = [];
+        }
+        array_unshift( $log, $entry );
+        $log = array_slice( $log, 0, 10 );
+        update_option( self::OPTION_LOG, $log, false );
+        return $entry;
+    }
+
+    /**
+     * Effettua un singolo fetch, senza toccare il log.
+     *
+     * @param string $url Feed URL.
+     * @return array<string,mixed>
+     */
+    private function fetch_once( string $url ) : array {
         $response = wp_remote_get( $url, [
             'timeout' => 20,
             'headers' => [
@@ -71,31 +103,23 @@ final class Aurora_Feed_Receiver {
             ],
         ] );
 
-        $log = get_option( self::OPTION_LOG, [] );
-        if ( ! is_array( $log ) ) {
-            $log = [];
-        }
-
         if ( is_wp_error( $response ) ) {
-            $entry = [
+            return [
                 'time'    => current_time( 'mysql' ),
                 'status'  => 'error',
                 'message' => $response->get_error_message(),
             ];
-        } else {
-            $body    = wp_remote_retrieve_body( $response );
-            $status  = (int) wp_remote_retrieve_response_code( $response );
-            $snippet = wp_trim_words( trim( wp_strip_all_tags( $body ) ), 40, '…' );
-            $entry   = [
-                'time'    => current_time( 'mysql' ),
-                'status'  => $status,
-                'message' => $snippet,
-            ];
         }
 
-        array_unshift( $log, $entry );
-        $log = array_slice( $log, 0, 10 );
-        update_option( self::OPTION_LOG, $log, false );
+        $body    = wp_remote_retrieve_body( $response );
+        $status  = (int) wp_remote_retrieve_response_code( $response );
+        $snippet = wp_trim_words( trim( wp_strip_all_tags( $body ) ), 40, '…' );
+
+        return [
+            'time'    => current_time( 'mysql' ),
+            'status'  => $status,
+            'message' => $snippet,
+        ];
     }
 
     public function register_menu() : void {
@@ -180,3 +204,29 @@ final class Aurora_Feed_Receiver {
 add_action( 'plugins_loaded', [ 'Aurora_Feed_Receiver', 'instance' ] );
 register_activation_hook( __FILE__, [ 'Aurora_Feed_Receiver', 'activate' ] );
 register_deactivation_hook( __FILE__, [ 'Aurora_Feed_Receiver', 'deactivate' ] );
+
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+    class Aurora_Feed_Receiver_CLI extends WP_CLI_Command {
+        /**
+         * Poll del feed prodotti.
+         *
+         * ## OPTIONS
+         *
+         * [--url=<url>]
+         * : URL alternativo da interrogare per questa esecuzione.
+         */
+        public function poll( array $args, array $assoc_args ) : void {
+            $url = $assoc_args['url'] ?? null;
+            $receiver = Aurora_Feed_Receiver::instance();
+            $entry = $receiver->record_fetch( $url );
+            if ( null === $entry ) {
+                WP_CLI::warning( __( 'Nessun URL configurato.', 'aurora-feed-receiver' ) );
+                return;
+            }
+            $status = $entry['status'] ?? 'n/a';
+            $message = $entry['message'] ?? '';
+            WP_CLI::success( sprintf( 'Status %s – %s', $status, $message ) );
+        }
+    }
+    WP_CLI::add_command( 'aurora feed', 'Aurora_Feed_Receiver_CLI' );
+}
