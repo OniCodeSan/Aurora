@@ -1,0 +1,21 @@
+# Aurora Enterprise Indexer – Cron schedule example
+# Copy these lines into your system crontab (crontab -e) or /etc/cron.d entry.
+# They assume:
+# - docker-compose project path = workspace/wordpress
+# - worker container name = wordpress-worker-1 (default from docker compose)
+# - Logs are stored under /var/log/aurora (create the directory first)
+
+# Price worker: every 5 minutes
+*/5 * * * * docker exec wordpress-worker-1 wp aurora worker --indexer=price --batch=750 --max-loops=2 --allow-root >> /var/log/aurora/worker-price.log 2>&1
+
+# Stock worker: every 5 minutes, offset by 2 minutes to avoid overlap
+2-59/5 * * * * docker exec wordpress-worker-1 wp aurora worker --indexer=stock --batch=750 --max-loops=2 --allow-root >> /var/log/aurora/worker-stock.log 2>&1
+
+# Visibility worker: every 15 minutes
+*/15 * * * * docker exec wordpress-worker-1 wp aurora worker --indexer=visibility --batch=500 --max-loops=1 --allow-root >> /var/log/aurora/worker-visibility.log 2>&1
+
+# Daily rebuild at 03:00 server time
+0 3 * * * docker exec wordpress-worker-1 wp aurora rebuild --indexer=all --allow-root >> /var/log/aurora/rebuild.log 2>&1
+
+# Feed receiver refresh every hour (optional)
+0 * * * * docker exec wordpress-worker-1 wp option update aurora_feed_receiver_url "https://www.contentmug.it/wp-json/wc/store/products" --allow-root >> /var/log/aurora/feed-receiver.log 2>&1
