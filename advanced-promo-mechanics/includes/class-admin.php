@@ -8,14 +8,16 @@ class Admin {
     private Catalog_Actions $catalog_actions;
     private Marketplace_Credentials $marketplace_credentials;
     private Sku_Map $sku_map;
+    private Activity_Log $activity_log;
 
-    public function __construct( Rules_Store $rules_store, Logger $logger, License $license, Catalog_Actions $catalog_actions, Marketplace_Credentials $marketplace_credentials, Sku_Map $sku_map ) {
+    public function __construct( Rules_Store $rules_store, Logger $logger, License $license, Catalog_Actions $catalog_actions, Marketplace_Credentials $marketplace_credentials, Sku_Map $sku_map, Activity_Log $activity_log ) {
         $this->rules_store              = $rules_store;
         $this->logger                   = $logger;
         $this->license                  = $license;
         $this->catalog_actions          = $catalog_actions;
         $this->marketplace_credentials  = $marketplace_credentials;
         $this->sku_map                  = $sku_map;
+        $this->activity_log             = $activity_log;
     }
 
     public function init() : void {
@@ -79,6 +81,15 @@ class Admin {
             'aurora-license',
             [ $this, 'render_license_page' ]
         );
+
+        add_submenu_page(
+            'aurora-project',
+            __( 'Log attività', 'advanced-promo-mechanics' ),
+            __( 'Log attività', 'advanced-promo-mechanics' ),
+            'manage_woocommerce',
+            'aurora-activity-log',
+            [ $this, 'render_activity_log_page' ]
+        );
     }
 
     public function render_page() : void {
@@ -100,6 +111,14 @@ class Admin {
         $days_left      = $this->license->days_left();
         $license_key    = $this->license->get_license_key();
         include APM_PLUGIN_DIR . 'includes/views/license-page.php';
+    }
+
+    public function render_activity_log_page() : void {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            return;
+        }
+        $entries = $this->activity_log->latest( 200 );
+        include APM_PLUGIN_DIR . 'includes/views/activity-log-page.php';
     }
 
     public function render_repricer_page() : void {
@@ -146,6 +165,7 @@ class Admin {
         $payload = $_POST['apm_rule'] ?? [];
         $this->rules_store->save_rule_meta( $post_id, $payload );
         $this->logger->debug( 'Saved rule meta', [ 'rule_id' => $post_id ] );
+        apm_log_activity( 'rule_saved', __( 'Regola promozione aggiornata.', 'advanced-promo-mechanics' ), [ 'rule_id' => $post_id ] );
     }
 
     public function enqueue_assets( string $hook ) : void {
@@ -186,9 +206,11 @@ class Admin {
         if ( $license_key ) {
             $this->license->store_license( $license_key );
             $message = __( 'License key salvata correttamente.', 'advanced-promo-mechanics' );
+            apm_log_activity( 'license_saved', __( 'License key aggiornata.', 'advanced-promo-mechanics' ), [] );
         } else {
             $this->license->remove_license();
             $message = __( 'License key rimossa. Il plugin tornerà in trial (se ancora disponibile).', 'advanced-promo-mechanics' );
+            apm_log_activity( 'license_removed', __( 'License key rimossa.', 'advanced-promo-mechanics' ), [] );
         }
 
         wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-license', 'apm_notice' => rawurlencode( $message ) ], admin_url( 'admin.php' ) ) );
@@ -219,6 +241,7 @@ class Admin {
         do_action( 'apm_repricer_settings_updated', $settings );
 
         $message = __( 'Impostazioni repricer salvate.', 'advanced-promo-mechanics' );
+        apm_log_activity( 'repricer_settings_saved', __( 'Impostazioni repricer aggiornate.', 'advanced-promo-mechanics' ), $settings );
         wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-repricer', 'apm_notice' => rawurlencode( $message ) ], admin_url( 'admin.php' ) ) );
         exit;
     }
@@ -260,6 +283,7 @@ class Admin {
         $saved_id = $this->marketplace_credentials->upsert( $marketplace, $label, $data );
         if ( $saved_id ) {
             do_action( 'apm_marketplace_account_saved', (int) $saved_id, $marketplace );
+            apm_log_activity( 'marketplace_account_saved', __( 'Account marketplace salvato.', 'advanced-promo-mechanics' ), [ 'account_id' => (int) $saved_id, 'marketplace' => $marketplace, 'label' => $label ] );
         }
         $message = $saved_id ? __( 'Account salvato.', 'advanced-promo-mechanics' ) : __( 'Errore nel salvataggio.', 'advanced-promo-mechanics' );
 
@@ -278,6 +302,7 @@ class Admin {
             $deleted = $this->marketplace_credentials->delete( $id );
             if ( $deleted && $account ) {
                 do_action( 'apm_marketplace_account_deleted', $id, $account['marketplace'] );
+                apm_log_activity( 'marketplace_account_deleted', __( 'Account marketplace eliminato.', 'advanced-promo-mechanics' ), [ 'account_id' => $id, 'marketplace' => $account['marketplace'] ?? '' ] );
             }
         }
         wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-repricer' ], admin_url( 'admin.php' ) ) );
@@ -301,6 +326,7 @@ class Admin {
         }
 
         $this->sku_map->upsert( $product_id, $variation_id, $marketplace, $marketplace_sku, $listing_id );
+        apm_log_activity( 'sku_map_saved', __( 'Link SKU marketplace salvato.', 'advanced-promo-mechanics' ), [ 'product_id' => $product_id, 'marketplace' => $marketplace ] );
         wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-repricer', 'apm_notice' => rawurlencode( __( 'Mapping salvato.', 'advanced-promo-mechanics' ) ) ], admin_url( 'admin.php' ) ) );
         exit;
     }
@@ -313,6 +339,7 @@ class Admin {
         $id = absint( $_POST['sku_map_id'] ?? 0 );
         if ( $id ) {
             $this->sku_map->delete( $id );
+            apm_log_activity( 'sku_map_deleted', __( 'Link SKU marketplace eliminato.', 'advanced-promo-mechanics' ), [ 'id' => $id ] );
         }
         wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-repricer' ], admin_url( 'admin.php' ) ) );
         exit;

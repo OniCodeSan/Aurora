@@ -19,7 +19,14 @@ class Feed_Profiles {
         return $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE tenant_id = %s ORDER BY created_at DESC", $this->tenant_id ), ARRAY_A );
     }
 
-    public function save( array $data ) : bool {
+    public function get( int $id ) : ?array {
+        global $wpdb;
+        $table = $this->table();
+        $row   = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE tenant_id = %s AND id = %d", $this->tenant_id, $id ), ARRAY_A );
+        return $row ?: null;
+    }
+
+    public function save( array $data ) : ?array {
         global $wpdb;
         $table = $this->table();
         $payload = [
@@ -28,17 +35,27 @@ class Feed_Profiles {
             'merchant'    => sanitize_key( $data['merchant'] ?? 'custom' ),
             'format'      => sanitize_key( $data['format'] ?? 'xml' ),
             'destination' => sanitize_text_field( $data['destination'] ?? '' ),
-            'schedule'    => sanitize_key( $data['schedule'] ?? 'manual' ),
+            'schedule'    => $this->sanitize_schedule( $data['schedule'] ?? 'manual' ),
             'notes'       => sanitize_textarea_field( $data['notes'] ?? '' ),
         ];
         if ( empty( $payload['name'] ) ) {
-            return false;
+            return null;
         }
-        return false !== $wpdb->insert( $table, $payload, [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ] );
+        $result = $wpdb->insert( $table, $payload, [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ] );
+        if ( false === $result ) {
+            return null;
+        }
+        return $this->get( (int) $wpdb->insert_id );
     }
 
     public function delete( int $id ) : bool {
         global $wpdb;
         return false !== $wpdb->delete( $this->table(), [ 'tenant_id' => $this->tenant_id, 'id' => $id ], [ '%s', '%d' ] );
+    }
+
+    private function sanitize_schedule( string $schedule ) : string {
+        $allowed = array_merge( [ 'manual' ], array_keys( Feed_Scheduler::get_interval_definitions() ) );
+        $value   = sanitize_key( $schedule );
+        return in_array( $value, $allowed, true ) ? $value : 'manual';
     }
 }

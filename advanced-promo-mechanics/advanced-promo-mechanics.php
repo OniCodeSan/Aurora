@@ -80,6 +80,7 @@ function apm_install() : void {
     $sku_map_table     = $wpdb->prefix . 'apm_sku_links';
     $feed_profiles     = $wpdb->prefix . 'apm_feed_profiles';
     $feed_logs         = $wpdb->prefix . 'apm_feed_logs';
+    $activity_log      = $wpdb->prefix . 'apm_activity_log';
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
@@ -170,12 +171,25 @@ function apm_install() : void {
         KEY profile_idx (profile_id, created_at)
     ) {$charset_collate};";
 
+    $activity_log_sql = "CREATE TABLE {$activity_log} (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+        event VARCHAR(100) NOT NULL,
+        message TEXT NOT NULL,
+        user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        meta LONGTEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY tenant_event_created (tenant_id, event, created_at)
+    ) {$charset_collate};";
+
     dbDelta( $snapshot_sql );
     dbDelta( $actions_sql );
     dbDelta( $accounts_sql );
     dbDelta( $sku_map_sql );
     dbDelta( $feed_profiles_sql );
     dbDelta( $feed_logs_sql );
+    dbDelta( $activity_log_sql );
 }
 
 function apm_encrypt_data( array $data ) : string {
@@ -205,6 +219,17 @@ function apm_decrypt_data( string $payload ) : array {
     }
     $data = json_decode( $json, true );
     return is_array( $data ) ? $data : [];
+}
+
+function apm_log_activity( string $event, string $message, array $meta = [] ) : void {
+    if ( ! class_exists( '\APM\Activity_Log' ) ) {
+        return;
+    }
+    static $activity_logger = null;
+    if ( null === $activity_logger ) {
+        $activity_logger = new APM\Activity_Log();
+    }
+    $activity_logger->record( $event, $message, $meta );
 }
 
 function apm_get_repricer_settings() : array {

@@ -23,7 +23,11 @@ class Plugin {
     private Amazon_Connector $amazon_connector;
     private Ebay_Connector $ebay_connector;
     private Sku_Map $sku_map;
+    private Activity_Log $activity_log;
+    private Feed_Logs $feed_logs;
+    private Feed_Exporter $feed_exporter;
     private Feed_Module $feed_module;
+    private Feed_Scheduler $feed_scheduler;
 
     public function init() : void {
         $this->license         = new License();
@@ -37,10 +41,15 @@ class Plugin {
         $this->marketplace_credentials = new Marketplace_Credentials();
         $this->scheduler               = new Marketplace_Scheduler( $this->marketplace_credentials, $this->logger );
         $this->sku_map                 = new Sku_Map( $this->marketplace_credentials );
-        $this->admin                   = new Admin( $this->rules_store, $this->logger, $this->license, $this->catalog_actions, $this->marketplace_credentials, $this->sku_map );
+        $this->activity_log            = new Activity_Log();
+        $this->admin                   = new Admin( $this->rules_store, $this->logger, $this->license, $this->catalog_actions, $this->marketplace_credentials, $this->sku_map, $this->activity_log );
         $this->amazon_connector        = new Amazon_Connector( $this->marketplace_credentials, $this->logger );
         $this->ebay_connector          = new Ebay_Connector( $this->marketplace_credentials, $this->logger );
-        $this->feed_module             = new Feed_Module( new Feed_Profiles(), new Feed_Logs() );
+        $feed_profiles                 = new Feed_Profiles();
+        $this->feed_logs               = new Feed_Logs();
+        $this->feed_exporter           = new Feed_Exporter( $this->feed_logs );
+        $this->feed_module             = new Feed_Module( $feed_profiles, $this->feed_logs, $this->feed_exporter );
+        $this->feed_scheduler          = new Feed_Scheduler( $feed_profiles, $this->feed_exporter, $this->feed_logs );
 
         add_action( 'init', [ $this, 'register_post_type' ] );
         add_action( 'init', [ $this, 'register_settings' ] );
@@ -54,6 +63,7 @@ class Plugin {
         $this->amazon_connector->init();
         $this->ebay_connector->init();
         $this->feed_module->init();
+        $this->feed_scheduler->init();
 
         if ( defined( 'WP_CLI' ) && WP_CLI ) {
             \WP_CLI::add_command( 'apm marketplace', new CLI( $this->scheduler, $this->marketplace_credentials ) );

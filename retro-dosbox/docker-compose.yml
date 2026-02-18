@@ -1,0 +1,30 @@
+services:
+  dosbox:
+    image: jgoerzen/dosbox:latest
+    restart: unless-stopped
+    ports:
+      - "5901:5901"   # VNC console
+    volumes:
+      - ./dosbox/c-drive:/dos/c
+      - ./dosbox/d-drive:/dos/d
+      - ./dosbox/conf:/dos/conf
+    environment:
+      - TZ=Europe/Rome
+
+  retroarch:
+    image: lscr.io/linuxserver/retroarch:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"   # HTTPS web UI (self-signed)
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      # Optional basic auth for the web UI. Uncomment + set if you want credentials.
+      # - CUSTOM_USER=mark
+      # - PASSWORD=supersecret
+    volumes:
+      - ./retroarch/config:/config
+      - ./games:/storage/games

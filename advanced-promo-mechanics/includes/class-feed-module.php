@@ -4,10 +4,12 @@ namespace APM;
 class Feed_Module {
     private Feed_Profiles $profiles;
     private Feed_Logs $logs;
+    private Feed_Exporter $exporter;
 
-    public function __construct( Feed_Profiles $profiles, Feed_Logs $logs ) {
+    public function __construct( Feed_Profiles $profiles, Feed_Logs $logs, Feed_Exporter $exporter ) {
         $this->profiles = $profiles;
         $this->logs     = $logs;
+        $this->exporter = $exporter;
     }
 
     public function init() : void {
@@ -31,10 +33,11 @@ class Feed_Module {
         if ( ! current_user_can( 'manage_woocommerce' ) ) {
             return;
         }
-        $profiles   = $this->profiles->all();
-        $logs       = $this->logs->latest();
-        $paths      = apm_get_feed_paths();
-        $manual     = $this->get_manual_steps();
+        $profiles          = $this->profiles->all();
+        $logs              = $this->logs->latest();
+        $paths             = apm_get_feed_paths();
+        $manual            = $this->get_manual_steps();
+        $schedule_options  = Feed_Scheduler::get_schedule_choices();
         include APM_PLUGIN_DIR . 'includes/views/feed-manager-page.php';
     }
 
@@ -43,8 +46,25 @@ class Feed_Module {
             wp_die( esc_html__( 'Permessi insufficienti.', 'advanced-promo-mechanics' ) );
         }
         check_admin_referer( 'apm_save_feed_profile' );
-        $saved = $this->profiles->save( $_POST );
-        wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-feed-manager', 'apm_notice' => rawurlencode( $saved ? __( 'Profilo salvato.', 'advanced-promo-mechanics' ) : __( 'Errore salvataggio profilo.', 'advanced-promo-mechanics' ) ) ], admin_url( 'admin.php' ) ) );
+        $profile = $this->profiles->save( $_POST );
+
+        $notice = $profile ? __( 'Profilo salvato.', 'advanced-promo-mechanics' ) : __( 'Errore salvataggio profilo.', 'advanced-promo-mechanics' );
+        if ( $profile ) {
+            $result = $this->exporter->generate_for_profile( $profile );
+            if ( $result['success'] ) {
+                $notice .= ' ' . sprintf(
+                    /* translators: 1: feed url */
+                    __( 'Feed aggiornato: %s', 'advanced-promo-mechanics' ),
+                    esc_url_raw( $result['file_url'] ?? '' )
+                );
+                apm_log_activity( 'feed_profile_saved', __( 'Profilo feed salvato.', 'advanced-promo-mechanics' ), [ 'profile_id' => $profile['id'] ?? null, 'name' => $profile['name'] ?? '', 'schedule' => $profile['schedule'] ?? 'manual', 'feed_url' => $result['file_url'] ?? '' ] );
+            } else {
+                $notice .= ' ' . sanitize_text_field( $result['message'] );
+                apm_log_activity( 'feed_profile_save_error', __( 'Errore durante la generazione del feed.', 'advanced-promo-mechanics' ), [ 'profile_id' => $profile['id'] ?? null, 'error' => $result['message'] ?? '' ] );
+            }
+        }
+
+        wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-feed-manager', 'apm_notice' => rawurlencode( $notice ) ], admin_url( 'admin.php' ) ) );
         exit;
     }
 
@@ -56,6 +76,7 @@ class Feed_Module {
         $id = absint( $_POST['feed_profile_id'] ?? 0 );
         if ( $id ) {
             $this->profiles->delete( $id );
+            apm_log_activity( 'feed_profile_deleted', __( 'Profilo feed eliminato.', 'advanced-promo-mechanics' ), [ 'profile_id' => $id ] );
         }
         wp_safe_redirect( add_query_arg( [ 'page' => 'aurora-feed-manager' ], admin_url( 'admin.php' ) ) );
         exit;
