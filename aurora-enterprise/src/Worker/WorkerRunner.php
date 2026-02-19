@@ -5,6 +5,7 @@ use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Indexer\PriceIndexer;
 use Aurora\Enterprise\Indexer\StockIndexer;
 use Aurora\Enterprise\Indexer\VisibilityIndexer;
+use Aurora\Enterprise\Indexer\FeedIndexer;
 use Aurora\Enterprise\Support\CronStatus;
 
 class WorkerRunner {
@@ -24,6 +25,7 @@ class WorkerRunner {
             'price'      => new PriceIndexer(),
             'stock'      => new StockIndexer(),
             'visibility' => new VisibilityIndexer(),
+            'feed'       => new FeedIndexer(),
         ];
         $processed = 0;
         $cronStatus = new CronStatus();

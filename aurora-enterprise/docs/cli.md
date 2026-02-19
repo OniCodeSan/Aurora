@@ -38,7 +38,16 @@ wp aurora queue status
 ```
 Mostra la profondità delle code (Redis o DB).
 
-## 5. Suggerimenti operativi
+## 5. Feed channel (MVP)
+```
+wp aurora feed enqueue --chunk-size=1000
+wp aurora worker --indexer=feed --batch=10 --max-loops=20
+```
+- `enqueue` crea job feed suddividendo il catalogo in chunk (default 1000 SKU).
+- I file vengono generati in `wp-content/uploads/aurora-feeds/<feed_id>.jsonl`.
+- Prima di usare il worker assicurarsi che la cartella `wp-content/uploads/aurora-feeds/` sia scrivibile da `www-data` (nel dev stack: `docker compose exec wordpress chmod -R 777 wp-content/uploads`).
+
+## 6. Suggerimenti operativi
 - Eseguire più worker in parallelo per price e stock (es. 2 process per ciascuno) per raggiungere il target import 10k < 5 minuti.
 - Monitorare la tabella `wp_product_index_logs` o i log file per errori; usare `wp aurora queue status` per identificare code bloccate.
 - Per riprovare job falliti in DB queue, cambiare `status` da `dead` a `pending` manualmente oppure implementare un comando `wp aurora queue retry --queue=price` (todo).

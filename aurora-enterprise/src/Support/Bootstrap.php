@@ -6,6 +6,7 @@ use Aurora\Enterprise\CLI\Enqueue_Command;
 use Aurora\Enterprise\CLI\Worker_Command;
 use Aurora\Enterprise\CLI\Rebuild_Command;
 use Aurora\Enterprise\CLI\Status_Command;
+use Aurora\Enterprise\CLI\Feed_Command;
 use Aurora\Enterprise\Events\Product_Event_Subscriber;
 use Aurora\Enterprise\Http\Controllers\Dashboard_Controller;
 use Aurora\Enterprise\Support\CronStatus;
@@ -56,6 +57,7 @@ class Bootstrap {
             \WP_CLI::add_command( 'aurora worker', new Worker_Command() );
             \WP_CLI::add_command( 'aurora rebuild', new Rebuild_Command() );
             \WP_CLI::add_command( 'aurora queue status', new Status_Command() );
+            \WP_CLI::add_command( 'aurora feed', new Feed_Command() );
         }
     }
 
