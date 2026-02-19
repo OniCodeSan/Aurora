@@ -29,7 +29,11 @@ class Dashboard {
     }
 
     public function enqueue_assets( string $hook ) : void {
-        if ( 'woocommerce_page_aurora-enterprise-indexer' !== $hook ) {
+        $allowed = [
+            'woocommerce_page_aurora-enterprise-indexer',
+            'aurora-project_page_aurora-enterprise-indexer',
+        ];
+        if ( ! in_array( $hook, $allowed, true ) ) {
             return;
         }
         wp_enqueue_style( 'aurora-enterprise-admin', plugins_url( 'assets/admin/css/dashboard.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], AURORA_ENTERPRISE_VERSION );
