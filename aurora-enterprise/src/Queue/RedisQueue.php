@@ -7,6 +7,8 @@ use RedisException;
 class RedisQueue implements QueueInterface {
     private Redis $redis;
     private string $namespace = 'aurora_queue:';
+    /** @var array<int,string> */
+    private array $channels = [ 'price', 'stock', 'visibility', 'feed' ];
 
     public function __construct( array $config ) {
         $this->redis = new Redis();
@@ -68,10 +70,16 @@ class RedisQueue implements QueueInterface {
 
     public function fail( Payload $job, string $error, bool $retryable = true ) : void {
         if ( ! $retryable || $job->attempts >= 5 ) {
-            $this->redis->rPush( $this->key( 'dead_' . $job->channel ), wp_json_encode( [
-                'id' => $job->id,
-                'error' => $error,
-            ] ) );
+            $deadPayload = [
+                'id'        => $job->id,
+                'queue'     => $job->channel,
+                'payload'   => $job->data,
+                'error'     => $error,
+                'failed_at' => current_time( 'mysql', true ),
+            ];
+            $key = $this->key( 'dead_' . $job->channel );
+            $this->redis->lPush( $key, wp_json_encode( $deadPayload ) );
+            $this->redis->lTrim( $key, 0, 199 ); // keep last 200 entries
             return;
         }
         $retryPayload = [
@@ -86,11 +94,62 @@ class RedisQueue implements QueueInterface {
     }
 
     public function stats() : array {
-        return [
-            'price'      => $this->redis->lLen( $this->key( 'price' ) ),
-            'stock'      => $this->redis->lLen( $this->key( 'stock' ) ),
-            'visibility' => $this->redis->lLen( $this->key( 'visibility' ) ),
-        ];
+        $stats = [];
+        foreach ( $this->channels as $channel ) {
+            $stats[ $channel ] = $this->redis->lLen( $this->key( $channel ) );
+        }
+        $stats['dead'] = 0;
+        foreach ( $this->channels as $channel ) {
+            $stats['dead'] += $this->redis->lLen( $this->key( 'dead_' . $channel ) );
+        }
+        return $stats;
+    }
+
+    public function dead( ?string $queue = null, int $limit = 20 ) : array {
+        $queues = $queue ? [ $queue ] : $this->channels;
+        $result = [];
+        foreach ( $queues as $channel ) {
+            $entries = $this->redis->lRange( $this->key( 'dead_' . $channel ), 0, $limit - 1 );
+            foreach ( $entries as $encoded ) {
+                $decoded = json_decode( $encoded, true );
+                if ( ! is_array( $decoded ) ) {
+                    continue;
+                }
+                $decoded['queue'] = $decoded['queue'] ?? $channel;
+                $result[] = $decoded;
+                if ( count( $result ) >= $limit ) {
+                    break 2;
+                }
+            }
+        }
+        return $result;
+    }
+
+    public function retryDead( ?string $queue = null, int $limit = 100 ) : int {
+        $queues = $queue ? [ $queue ] : $this->channels;
+        $retried = 0;
+        while ( $retried < $limit ) {
+            $popped = false;
+            foreach ( $queues as $channel ) {
+                $encoded = $this->redis->rPop( $this->key( 'dead_' . $channel ) );
+                if ( ! $encoded ) {
+                    continue;
+                }
+                $decoded = json_decode( $encoded, true );
+                $payload = is_array( $decoded ) ? ( $decoded['payload'] ?? [] ) : [];
+                $target = is_array( $decoded ) ? ( $decoded['queue'] ?? $channel ) : $channel;
+                $this->enqueue( $target, $payload );
+                $retried++;
+                $popped = true;
+                if ( $retried >= $limit ) {
+                    break;
+                }
+            }
+            if ( ! $popped ) {
+                break;
+            }
+        }
+        return $retried;
     }
 
     private function key( string $suffix ) : string {

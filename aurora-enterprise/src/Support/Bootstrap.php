@@ -9,6 +9,7 @@ use Aurora\Enterprise\CLI\Status_Command;
 use Aurora\Enterprise\CLI\Feed_Command;
 use Aurora\Enterprise\Events\Product_Event_Subscriber;
 use Aurora\Enterprise\Http\Controllers\Dashboard_Controller;
+use Aurora\Enterprise\Http\Controllers\Queue_Controller;
 use Aurora\Enterprise\Support\CronStatus;
 
 class Bootstrap {
@@ -48,6 +49,7 @@ class Bootstrap {
         add_action( 'rest_api_init', static function () {
             ( new Dashboard_Controller() )->register_routes();
             ( new \Aurora\Enterprise\Http\Controllers\Cron_Controller() )->register_routes();
+            ( new Queue_Controller() )->register_routes();
         } );
     }
 

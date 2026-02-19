@@ -103,10 +103,51 @@ class DatabaseQueue implements QueueInterface {
 
     public function stats() : array {
         $counts = $this->db->get_results( "SELECT queue, COUNT(*) as total FROM {$this->table} WHERE status = 'pending' GROUP BY queue" );
-        $out = [];
+        $defaults = [ 'price' => 0, 'stock' => 0, 'visibility' => 0, 'feed' => 0 ];
         foreach ( $counts as $row ) {
-            $out[ $row->queue ] = (int) $row->total;
+            $defaults[ $row->queue ] = (int) $row->total;
         }
-        return $out;
+        $defaults['dead'] = (int) $this->db->get_var( "SELECT COUNT(*) FROM {$this->table} WHERE status = 'dead'" );
+        return $defaults;
+    }
+
+    public function dead( ?string $queue = null, int $limit = 20 ) : array {
+        $where = "status = 'dead'";
+        $params = [];
+        if ( $queue ) {
+            $where .= ' AND queue = %s';
+            $params[] = $queue;
+        }
+        $sql = "SELECT job_uuid, queue, error, updated_at FROM {$this->table} WHERE {$where} ORDER BY updated_at DESC LIMIT %d";
+        $params[] = $limit;
+        $prepared = $this->db->prepare( $sql, ...$params );
+        $rows = $this->db->get_results( $prepared, ARRAY_A );
+        return array_map( static function ( array $row ) {
+            return [
+                'id'        => $row['job_uuid'],
+                'queue'     => $row['queue'],
+                'error'     => $row['error'],
+                'failed_at' => $row['updated_at'],
+            ];
+        }, $rows ?: [] );
+    }
+
+    public function retryDead( ?string $queue = null, int $limit = 100 ) : int {
+        $where = [ "status = 'dead'" ];
+        $params = [];
+        if ( $queue ) {
+            $where[] = 'queue = %s';
+            $params[] = $queue;
+        }
+        $whereSql = implode( ' AND ', $where );
+        $sql = "UPDATE {$this->table}
+            SET status = 'pending', attempts = 0, available_at = %s, updated_at = %s
+            WHERE {$whereSql}
+            ORDER BY updated_at DESC
+            LIMIT %d";
+        $params = array_merge( [ current_time( 'mysql', true ), current_time( 'mysql', true ) ], $params, [ $limit ] );
+        $prepared = $this->db->prepare( $sql, ...$params );
+        $this->db->query( $prepared );
+        return (int) $this->db->rows_affected;
     }
 }

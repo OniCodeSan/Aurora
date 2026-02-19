@@ -45,4 +45,15 @@ class Queue_Manager implements QueueInterface {
     public function stats() : array {
         return $this->driver->stats();
     }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    public function dead( ?string $queue = null, int $limit = 20 ) : array {
+        return $this->driver->dead( $queue, $limit );
+    }
+
+    public function retryDead( ?string $queue = null, int $limit = 100 ) : int {
+        return $this->driver->retryDead( $queue, $limit );
+    }
 }

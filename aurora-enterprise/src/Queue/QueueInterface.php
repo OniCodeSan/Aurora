@@ -24,4 +24,11 @@ interface QueueInterface {
      * @return array<string,int|string>
      */
     public function stats() : array;
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    public function dead( ?string $queue = null, int $limit = 20 ) : array;
+
+    public function retryDead( ?string $queue = null, int $limit = 100 ) : int;
 }
