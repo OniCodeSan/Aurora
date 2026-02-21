@@ -43,4 +43,12 @@ class Config {
         $option = get_option( 'aurora_lease_sweep_cron_enabled', true );
         return (bool) $option;
     }
+
+    public static function totalShards() : int {
+        if ( defined( 'AURORA_TOTAL_SHARDS' ) ) {
+            return max( 1, (int) AURORA_TOTAL_SHARDS );
+        }
+        $option = (int) get_option( 'aurora_total_shards', 8 );
+        return max( 1, $option );
+    }
 }

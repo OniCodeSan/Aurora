@@ -27,6 +27,18 @@ class Migrate_Command extends WP_CLI_Command {
         $runner = new SnapshotV2Migrator( $dryRun, $skipRebuild );
         $runner->run();
     }
+
+    /**
+     * Add shard column + indexes to the queue table.
+     *
+     * ## OPTIONS
+     * [--dry-run]
+     */
+    public function queue_shards( array $args, array $assoc_args ) : void {
+        $dryRun = isset( $assoc_args['dry-run'] );
+        $migrator = new QueueShardMigrator( $dryRun );
+        $migrator->run();
+    }
 }
 
 class SnapshotV2Migrator {
@@ -222,9 +234,84 @@ class SnapshotV2Migrator {
         return ! empty( $result );
     }
 
+    private function recreateIndex( string $name, string $sql ) : void {
+        if ( $this->indexExists( $name ) ) {
+            $this->execute( "ALTER TABLE {$this->table} DROP INDEX {$name}" );
+        }
+        $this->execute( $sql );
+    }
+
     private function indexExists( string $table, string $index ) : bool {
         $result = $this->db->get_var(
             $this->db->prepare( "SHOW INDEX FROM {$table} WHERE Key_name = %s", $index )
+        );
+        return ! empty( $result );
+    }
+}
+
+
+class QueueShardMigrator {
+    private bool $dryRun;
+    private wpdb $db;
+    private string $table;
+
+    public function __construct( bool $dryRun ) {
+        global $wpdb;
+        $this->dryRun = $dryRun;
+        $this->db     = $wpdb;
+        $this->table  = $wpdb->prefix . 'product_index_queue';
+    }
+
+    public function run() : void {
+        WP_CLI::log( 'Migrating queue table for shard support' . ( $this->dryRun ? ' (dry-run)' : '' ) );
+        $this->ensureShardColumn();
+        $this->ensureIndexes();
+        WP_CLI::success( 'Queue shard migration completed.' );
+    }
+
+    private function ensureShardColumn() : void {
+        if ( $this->columnExists( 'shard' ) ) {
+            WP_CLI::log( 'Column shard already present.' );
+            return;
+        }
+        $sql = "ALTER TABLE {$this->table} ADD COLUMN shard TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER queue";
+        $this->execute( $sql );
+    }
+
+    private function ensureIndexes() : void {
+        $this->recreateIndex( 'queue_shard_status', "ALTER TABLE {$this->table} ADD KEY queue_shard_status (queue, shard, status, available_at, id)" );
+        $this->recreateIndex( 'shard_status', "ALTER TABLE {$this->table} ADD KEY shard_status (shard, status, available_at, id)" );
+        if ( $this->indexExists( 'queue_status' ) ) {
+            $this->execute( "ALTER TABLE {$this->table} DROP INDEX queue_status" );
+        }
+    }
+
+    private function execute( string $sql ) : void {
+        if ( $this->dryRun ) {
+            WP_CLI::log( '[dry-run] ' . $sql );
+            return;
+        }
+        $this->db->query( $sql );
+        WP_CLI::log( 'Executed: ' . $sql );
+    }
+
+    private function columnExists( string $column ) : bool {
+        $result = $this->db->get_var(
+            $this->db->prepare( "SHOW COLUMNS FROM {$this->table} LIKE %s", $column )
+        );
+        return ! empty( $result );
+    }
+
+    private function recreateIndex( string $name, string $sql ) : void {
+        if ( $this->indexExists( $name ) ) {
+            $this->execute( "ALTER TABLE {$this->table} DROP INDEX {$name}" );
+        }
+        $this->execute( $sql );
+    }
+
+    private function indexExists( string $index ) : bool {
+        $result = $this->db->get_var(
+            $this->db->prepare( "SHOW INDEX FROM {$this->table} WHERE Key_name = %s", $index )
         );
         return ! empty( $result );
     }

@@ -56,7 +56,16 @@ wp aurora test seed-queue --count=60 --channel=price --reset
 - `--reset` tronca `product_index_queue` e `aurora_idempotence_cache` per run ripetibili (es. CI).
 - I payload sono deterministici: stesso `channel` + `count` => stessi hash/payload.
 
-## 7. Suggerimenti operativi
+## 7. Queue shard utilities
+```
+wp aurora queue backfill-shards --batch=2000 --total=8
+```
+- Usa questo comando dopo la migrazione schema per popolare la colonna `shard` esistente.
+- `--batch` controlla quante righe vengono elaborate per iterazione.
+- `--total` deve combaciare con il numero di shard configurati (default 8).
+- `--force` ricalcola TUTTE le righe; senza flag si toccano solo quelle con shard=0 (sicuro per prod).
+
+## 8. Suggerimenti operativi
 - Eseguire più worker in parallelo per price e stock (es. 2 process per ciascuno) per raggiungere il target import 10k < 5 minuti.
 - Monitorare la tabella `wp_product_index_logs` o i log file per errori; usare `wp aurora queue status` per identificare code bloccate.
 - Per riprovare job falliti in DB queue, cambiare `status` da `dead` a `pending` manualmente oppure implementare un comando `wp aurora queue retry --queue=price` (todo).

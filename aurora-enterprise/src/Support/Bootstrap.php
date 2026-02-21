@@ -12,6 +12,7 @@ use Aurora\Enterprise\CLI\Feed_Command;
 use Aurora\Enterprise\CLI\Migrate_Command;
 use Aurora\Enterprise\CLI\Queue_Sweep_Command;
 use Aurora\Enterprise\CLI\Test_Command;
+use Aurora\Enterprise\CLI\Queue_Backfill_Shards_Command;
 use Aurora\Enterprise\Events\Product_Event_Subscriber;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Queue\DatabaseQueue;
@@ -73,6 +74,7 @@ class Bootstrap {
             \WP_CLI::add_command( 'aurora rebuild', new Rebuild_Command() );
             \WP_CLI::add_command( 'aurora queue status', new Status_Command() );
             \WP_CLI::add_command( 'aurora queue sweep-leases', new Queue_Sweep_Command() );
+            \WP_CLI::add_command( 'aurora queue backfill-shards', new Queue_Backfill_Shards_Command() );
             \WP_CLI::add_command( 'aurora test', new Test_Command() );
             $migrateCommand = new Migrate_Command();
             \WP_CLI::add_command( 'aurora migrate', $migrateCommand );

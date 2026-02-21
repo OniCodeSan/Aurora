@@ -109,6 +109,7 @@ class Installer {
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             job_uuid CHAR(36) NOT NULL,
             queue VARCHAR(50) NOT NULL,
+            shard TINYINT UNSIGNED NOT NULL DEFAULT 0,
             payload LONGTEXT NOT NULL,
             payload_hash BINARY(16) NULL,
             priority TINYINT NOT NULL DEFAULT 0,
@@ -123,7 +124,8 @@ class Installer {
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (id),
             UNIQUE KEY job_uuid (job_uuid),
-            KEY queue_status (queue, status, available_at),
+            KEY queue_shard_status (queue, shard, status, available_at, id),
+            KEY shard_status (shard, status, available_at, id),
             KEY payload_hash (payload_hash)
         ) {$charset};";
 
