@@ -3,6 +3,8 @@ namespace Aurora\Enterprise\Queue;
 
 use Aurora\Enterprise\Support\Config;
 
+use function strtolower;
+
 class Queue_Manager implements QueueInterface {
     private static ?Queue_Manager $instance = null;
 
@@ -20,10 +22,23 @@ class Queue_Manager implements QueueInterface {
     }
 
     private function bootstrapDriver() : QueueInterface {
+        if ( defined( 'AURORA_QUEUE_DRIVER' ) ) {
+            $forced = strtolower( (string) AURORA_QUEUE_DRIVER );
+            if ( 'database' === $forced ) {
+                return new DatabaseQueue();
+            }
+            if ( 'redis' === $forced && extension_loaded( 'redis' ) ) {
+                return new RedisQueue( Config::redisConfig() );
+            }
+        }
         if ( extension_loaded( 'redis' ) ) {
             return new RedisQueue( Config::redisConfig() );
         }
         return new DatabaseQueue();
+    }
+
+    public function driver() : QueueInterface {
+        return $this->driver;
     }
 
     public function enqueue( string $channel, array $payload ) : string {

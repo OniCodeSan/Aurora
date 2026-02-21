@@ -18,6 +18,7 @@ wp aurora worker --indexer=all --batch=500 --max-loops=1
 - `--indexer` può essere `price`, `stock`, `visibility` oppure `all`.
 - `--batch` indica quanti job per ciclo.
 - `--max-loops` quanti cicli eseguire (utile per cron periodico). Con un supervisore persistente usare valore alto o `INF`.
+- `--simulate-crash-after=N` (solo test) processa N job e termina senza ACK, utile per provare lo sweeper.
 
 ### Script standalone (cron Linux)
 ```
@@ -47,7 +48,15 @@ wp aurora worker --indexer=feed --batch=10 --max-loops=20
 - I file vengono generati in `wp-content/uploads/aurora-feeds/<feed_id>.jsonl`.
 - Prima di usare il worker assicurarsi che la cartella `wp-content/uploads/aurora-feeds/` sia scrivibile da `www-data` (nel dev stack: `docker compose exec wordpress chmod -R 777 wp-content/uploads`).
 
-## 6. Suggerimenti operativi
+## 6. Test helpers
+```
+wp aurora test seed-queue --count=60 --channel=price --reset
+```
+- Preferisci sempre la forma con trattino: `wp aurora test seed-queue` (alias WP-CLI `seed_queue`).
+- `--reset` tronca `product_index_queue` e `aurora_idempotence_cache` per run ripetibili (es. CI).
+- I payload sono deterministici: stesso `channel` + `count` => stessi hash/payload.
+
+## 7. Suggerimenti operativi
 - Eseguire più worker in parallelo per price e stock (es. 2 process per ciascuno) per raggiungere il target import 10k < 5 minuti.
 - Monitorare la tabella `wp_product_index_logs` o i log file per errori; usare `wp aurora queue status` per identificare code bloccate.
 - Per riprovare job falliti in DB queue, cambiare `status` da `dead` a `pending` manualmente oppure implementare un comando `wp aurora queue retry --queue=price` (todo).
