@@ -154,6 +154,13 @@ class SnapshotV2Migrator {
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY (stat_key)
             ) {$this->db->get_charset_collate()};",
+            'aurora_queue_checkpoints' => "CREATE TABLE {$this->prefix}aurora_queue_checkpoints (
+                channel VARCHAR(32) NOT NULL,
+                shard TINYINT UNSIGNED NOT NULL,
+                last_job_uuid CHAR(36) NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (channel, shard)
+            ) {$this->db->get_charset_collate()};",
         ];
         foreach ( $tables as $name => $sql ) {
             if ( $this->dryRun ) {
@@ -266,6 +273,7 @@ class QueueShardMigrator {
         WP_CLI::log( 'Migrating queue table for shard support' . ( $this->dryRun ? ' (dry-run)' : '' ) );
         $this->ensureShardColumn();
         $this->ensureIndexes();
+        $this->ensureCheckpointTable();
         WP_CLI::success( 'Queue shard migration completed.' );
     }
 
@@ -279,11 +287,30 @@ class QueueShardMigrator {
     }
 
     private function ensureIndexes() : void {
+
         $this->recreateIndex( 'queue_shard_status', "ALTER TABLE {$this->table} ADD KEY queue_shard_status (queue, shard, status, available_at, id)" );
         $this->recreateIndex( 'shard_status', "ALTER TABLE {$this->table} ADD KEY shard_status (shard, status, available_at, id)" );
         if ( $this->indexExists( 'queue_status' ) ) {
             $this->execute( "ALTER TABLE {$this->table} DROP INDEX queue_status" );
         }
+    }
+
+    private function ensureCheckpointTable() : void {
+        $table = $this->db->prefix . 'aurora_queue_checkpoints';
+        $exists = $this->db->get_var( $this->db->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $exists ) {
+            WP_CLI::log( 'Checkpoint table already present.' );
+            return;
+        }
+        $charset = $this->db->get_charset_collate();
+        $sql = "CREATE TABLE {$table} (
+            channel VARCHAR(32) NOT NULL,
+            shard TINYINT UNSIGNED NOT NULL,
+            last_job_uuid CHAR(36) NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (channel, shard)
+        ) {$charset};";
+        $this->execute( $sql );
     }
 
     private function execute( string $sql ) : void {

@@ -4,6 +4,7 @@ namespace Aurora\Enterprise\CLI;
 use WP_CLI_Command;
 use WP_CLI;
 use Aurora\Enterprise\Queue\Queue_Manager;
+use Aurora\Enterprise\Support\SnapshotVersionManager;
 use function sanitize_key;
 
 class Feed_Command extends WP_CLI_Command {
@@ -20,6 +21,19 @@ class Feed_Command extends WP_CLI_Command {
      */
     public function enqueue( array $args, array $assoc_args ) : void {
         $chunkSize = isset( $assoc_args['chunk-size'] ) ? max( 100, (int) $assoc_args['chunk-size'] ) : 1000;
+        $versionManager = new SnapshotVersionManager();
+        global $wpdb;
+        $tables = [
+            'price'      => $versionManager->currentVersion( $wpdb->prefix . 'aurora_price_snapshot' ),
+            'stock'      => $versionManager->currentVersion( $wpdb->prefix . 'aurora_stock_snapshot' ),
+            'visibility' => $versionManager->currentVersion( $wpdb->prefix . 'aurora_visibility_snapshot' ),
+        ];
+        $unique = array_unique( array_values( $tables ) );
+        if ( count( $unique ) !== 1 ) {
+            WP_CLI::error( sprintf( 'Snapshot versions not aligned (price=%d, stock=%d, visibility=%d).', $tables['price'], $tables['stock'], $tables['visibility'] ) );
+        }
+        $cutVersion = (int) $unique[0];
+        WP_CLI::log( sprintf( 'Using snapshot cut version %d for feed.', $cutVersion ) );
         $feedId    = isset( $assoc_args['feed-id'] ) ? sanitize_key( $assoc_args['feed-id'] ) : wp_generate_uuid4();
 
         $product_ids = get_posts( [
@@ -42,8 +56,9 @@ class Feed_Command extends WP_CLI_Command {
                 'chunk'       => $index + 1,
                 'total_chunks'=> $total,
                 'product_ids' => $chunk,
+                'snapshot_cut_version' => $cutVersion,
             ] );
         }
-        WP_CLI::success( sprintf( 'Queued feed %s (%d chunks of %d products).', $feedId, $total, $chunkSize ) );
+        WP_CLI::success( sprintf( 'Queued feed %s (%d chunks of %d products) @ version %d.', $feedId, $total, $chunkSize, $cutVersion ) );
     }
 }

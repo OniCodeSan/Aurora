@@ -7,6 +7,7 @@ use Aurora\Enterprise\Indexer\StockIndexer;
 use Aurora\Enterprise\Indexer\VisibilityIndexer;
 use Aurora\Enterprise\Indexer\FeedIndexer;
 use Aurora\Enterprise\Support\CronStatus;
+use Aurora\Enterprise\Support\Config;
 
 use wpdb;
 
@@ -23,12 +24,16 @@ class WorkerRunner {
     private int $batchSize;
     private int $maxLoops;
     private ?int $simulateCrashAfter;
+    private ?int $shardFilter;
+    private int $totalShards;
 
-    public function __construct( string $target = 'all', int $batchSize = 750, int $maxLoops = 1, ?int $simulateCrashAfter = null ) {
+    public function __construct( string $target = 'all', int $batchSize = 750, int $maxLoops = 1, ?int $simulateCrashAfter = null, ?int $shardFilter = null, ?int $totalShards = null ) {
         $this->target              = $target;
         $this->batchSize           = $batchSize;
         $this->maxLoops            = $maxLoops;
         $this->simulateCrashAfter  = $simulateCrashAfter;
+        $this->shardFilter         = $shardFilter;
+        $this->totalShards         = $totalShards ?? Config::totalShards();
     }
 
     public function run() : int {
@@ -52,7 +57,7 @@ class WorkerRunner {
                     return $processed;
                 }
 
-                $jobs = $queue->reserveBatch( $indexer->getChannel(), $requestedBatch );
+                $jobs = $queue->reserveBatch( $indexer->getChannel(), $requestedBatch, $this->shardFilter );
                 if ( empty( $jobs ) ) {
                     continue;
                 }

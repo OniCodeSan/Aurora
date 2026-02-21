@@ -211,6 +211,14 @@ class Installer {
             PRIMARY KEY (stat_key)
         ) {$charset};";
 
+        $schema[] = "CREATE TABLE {$prefix}aurora_queue_checkpoints (
+            channel VARCHAR(32) NOT NULL,
+            shard TINYINT UNSIGNED NOT NULL,
+            last_job_uuid CHAR(36) NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (channel, shard)
+        ) {$charset};";
+
         $schema[] = "CREATE TABLE {$prefix}aurora_idempotence_cache (
             dedup_hash BINARY(16) NOT NULL,
             job_uuid CHAR(36) NOT NULL,

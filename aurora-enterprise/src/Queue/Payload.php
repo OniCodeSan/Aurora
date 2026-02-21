@@ -6,6 +6,9 @@ class Payload {
         public readonly string $id,
         public readonly string $channel,
         public readonly array $data,
-        public int $attempts = 0
+        public int $attempts = 0,
+        public ?string $leaseToken = null,
+        public ?string $payloadHash = null,
+        public ?int $shard = null
     ) {}
 }

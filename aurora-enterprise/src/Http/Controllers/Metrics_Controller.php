@@ -2,6 +2,8 @@
 namespace Aurora\Enterprise\Http\Controllers;
 
 use Aurora\Enterprise\Support\Runtime_Stats;
+use Aurora\Enterprise\Support\CheckpointStore;
+use Aurora\Enterprise\Support\Config;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -31,10 +33,12 @@ class Metrics_Controller {
         if ( ! $wpdb ) {
             return new WP_REST_Response( [ 'error' => 'wpdb unavailable' ], 500 );
         }
-        $table   = $wpdb->prefix . 'product_index_queue';
+        $table         = $wpdb->prefix . 'product_index_queue';
+        $totalShards   = Config::totalShards();
+        $checkpointMap = ( new CheckpointStore() )->fetchForChannels( self::CHANNELS );
         $channels = [];
         foreach ( self::CHANNELS as $channel ) {
-            $channels[ $channel ] = $this->collectChannelStats( $wpdb, $table, $channel );
+            $channels[ $channel ] = $this->collectChannelStats( $wpdb, $table, $channel, $totalShards, $checkpointMap[ $channel ] ?? [] );
         }
         $expired = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE status = 'processing' AND lease_expires_at IS NOT NULL AND lease_expires_at <= UTC_TIMESTAMP()" );
         $versions = $this->collectSnapshotVersions( $wpdb );
@@ -55,36 +59,64 @@ class Metrics_Controller {
         ] );
     }
 
-    private function collectChannelStats( \wpdb $wpdb, string $table, string $channel ) : array {
+    private function collectChannelStats( \wpdb $wpdb, string $table, string $channel, int $totalShards, array $checkpointData ) : array {
+        $channelTotals = array_fill_keys( [ 'pending', 'processing', 'dead' ], 0 );
+        $shards = [];
+        for ( $s = 0; $s < $totalShards; $s++ ) {
+            $shards[ $s ] = [
+                'id'                          => $s,
+                'pending'                     => 0,
+                'processing'                  => 0,
+                'dead'                        => 0,
+                'oldest_pending_age_seconds'   => 0,
+                'checkpoint_updated_at'       => $checkpointData[ $s ]['checkpoint_updated_at'] ?? null,
+                'last_job_uuid'               => $checkpointData[ $s ]['last_job_uuid'] ?? null,
+            ];
+        }
         $counts = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT status, COUNT(*) AS total FROM {$table} WHERE queue = %s GROUP BY status",
+                "SELECT shard, status, COUNT(*) AS total FROM {$table} WHERE queue = %s GROUP BY shard, status",
                 $channel
             ),
             ARRAY_A
         ) ?: [];
-        $stats = array_fill_keys( [ 'pending', 'processing', 'dead' ], 0 );
         foreach ( $counts as $row ) {
+            $shard  = (int) ( $row['shard'] ?? 0 );
             $status = $row['status'];
-            if ( isset( $stats[ $status ] ) ) {
-                $stats[ $status ] = (int) $row['total'];
+            $count  = (int) $row['total'];
+            if ( isset( $channelTotals[ $status ] ) ) {
+                $channelTotals[ $status ] += $count;
+            }
+            if ( isset( $shards[ $shard ] ) && array_key_exists( $status, $shards[ $shard ] ) ) {
+                $shards[ $shard ][ $status ] = $count;
             }
         }
-        $oldest = $wpdb->get_var(
+        $oldestRows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT MIN(available_at) FROM {$table} WHERE queue = %s AND status = 'pending'",
+                "SELECT shard, MIN(available_at) AS oldest FROM {$table} WHERE queue = %s AND status = 'pending' GROUP BY shard",
                 $channel
-            )
-        );
-        $ageSeconds = 0;
-        if ( $oldest ) {
-            $timestamp = strtotime( (string) $oldest );
-            if ( false !== $timestamp ) {
-                $ageSeconds = max( 0, time() - $timestamp );
+            ),
+            ARRAY_A
+        ) ?: [];
+        foreach ( $oldestRows as $row ) {
+            $shard = (int) ( $row['shard'] ?? 0 );
+            $age   = $this->computeAgeSeconds( $row['oldest'] ?? null );
+            if ( isset( $shards[ $shard ] ) ) {
+                $shards[ $shard ]['oldest_pending_age_seconds'] = $age;
             }
         }
-        $stats['oldest_pending_age_seconds'] = $ageSeconds;
-        return $stats;
+        $overallAge = 0;
+        foreach ( $shards as $stats ) {
+            $overallAge = max( $overallAge, $stats['oldest_pending_age_seconds'] );
+        }
+        return [
+            'pending'                     => $channelTotals['pending'],
+            'processing'                  => $channelTotals['processing'],
+            'dead'                        => $channelTotals['dead'],
+            'oldest_pending_age_seconds'  => $overallAge,
+            'total_shards'                => $totalShards,
+            'shards'                      => array_values( $shards ),
+        ];
     }
 
     private function collectSnapshotVersions( \wpdb $wpdb ) : array {
@@ -95,5 +127,17 @@ class Metrics_Controller {
             $versions[ $row['table_name'] ] = (int) $row['current_version'];
         }
         return $versions;
+    }
+}
+
+    private function computeAgeSeconds( ?string $datetime ) : int {
+        if ( empty( $datetime ) ) {
+            return 0;
+        }
+        $timestamp = strtotime( $datetime );
+        if ( false === $timestamp ) {
+            return 0;
+        }
+        return max( 0, time() - $timestamp );
     }
 }

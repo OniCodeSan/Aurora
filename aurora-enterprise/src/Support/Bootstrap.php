@@ -118,7 +118,11 @@ class Bootstrap {
         if ( ! $queue instanceof DatabaseQueue ) {
             return;
         }
-        $queue->sweepExpiredLeases( null, Config::leaseTtlSeconds() );
+                $ttl = Config::leaseTtlSeconds();
+        $totalShards = Config::totalShards();
+        for ( $shard = 0; $shard < $totalShards; $shard++ ) {
+            $queue->sweepExpiredLeases( null, $ttl, $shard );
+        }
     }
 
     public function handle_async_rebuild( string $target = 'all' ) : void {

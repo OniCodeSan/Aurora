@@ -34,7 +34,7 @@ class RedisQueue implements QueueInterface {
         return $job_id;
     }
 
-    public function reserveBatch( string $channel, int $batchSize = 500 ) : array {
+    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null ) : array {
         $this->drainDueRetries( $channel );
         $jobs = [];
         for ( $i = 0; $i < $batchSize; $i++ ) {
@@ -46,7 +46,7 @@ class RedisQueue implements QueueInterface {
             if ( ! is_array( $decoded ) ) {
                 continue;
             }
-            $jobs[] = new Payload( $decoded['id'], $decoded['channel'], $decoded['payload'], (int) ( $decoded['attempts'] ?? 0 ) );
+            $jobs[] = new Payload( $decoded['id'], $decoded['channel'], $decoded['payload'], (int) ( $decoded['attempts'] ?? 0 ), null, null, null );
         }
         return $jobs;
     }

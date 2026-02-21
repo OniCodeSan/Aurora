@@ -3,6 +3,7 @@ namespace Aurora\Enterprise\Queue;
 
 use Aurora\Enterprise\Support\Config;
 use Aurora\Enterprise\Support\Runtime_Stats;
+use Aurora\Enterprise\Support\CheckpointStore;
 use function current_time;
 use function gmdate;
 use function md5;
@@ -21,12 +22,14 @@ class DatabaseQueue implements QueueInterface {
     private int $leaseTtl;
     private int $idempotenceTtl;
     private int $maxAttempts = 5;
+    private CheckpointStore $checkpoints;
 
     public function __construct() {
         global $wpdb;
         $this->db             = $wpdb;
         $this->table          = $wpdb->prefix . 'product_index_queue';
         $this->idempotence    = new IdempotenceStore();
+        $this->checkpoints   = new CheckpointStore();
         $this->leaseTtl       = Config::leaseTtlSeconds();
         $this->idempotenceTtl = Config::idempotenceTtlSeconds();
         $this->idempotence->purgeExpired();
@@ -41,11 +44,13 @@ class DatabaseQueue implements QueueInterface {
             return $claim['job_id'];
         }
         $now = current_time( 'mysql', true );
+        $shard = $this->determineShard( $channel, $payload );
         $this->db->insert(
             $this->table,
             [
                 'job_uuid'       => $job_id,
                 'queue'          => $channel,
+                'shard'          => $shard,
                 'payload'        => wp_json_encode( $payload ),
                 'payload_hash'   => $payloadHash,
                 'status'         => 'pending',
@@ -53,27 +58,28 @@ class DatabaseQueue implements QueueInterface {
                 'created_at'     => $now,
                 'updated_at'     => $now,
             ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            [ '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
         return $job_id;
     }
 
-    public function reserveBatch( string $channel, int $batchSize = 500 ) : array {
+    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null ) : array {
         $now = current_time( 'mysql', true );
         $this->db->query( 'START TRANSACTION' );
-        $rows = $this->db->get_results( $this->db->prepare(
-            "SELECT * FROM {$this->table}
+        $reserveSql = "SELECT * FROM {$this->table}
              WHERE queue = %s
-               AND available_at <= %s
-               AND status IN ('pending','processing')
-               AND (status = 'pending' OR lease_expires_at IS NULL OR lease_expires_at <= %s)
-             ORDER BY priority DESC, id ASC
-             LIMIT %d FOR UPDATE SKIP LOCKED",
-            $channel,
-            $now,
-            $now,
-            $batchSize
-        ) );
+               AND status = 'pending'
+               AND available_at <= %s";
+        $params = [ $channel, $now ];
+        if ( null !== $shard ) {
+            $reserveSql .= ' AND shard = %d';
+            $params[] = $shard;
+        }
+        $reserveSql .= "
+             ORDER BY priority DESC, available_at ASC, id ASC
+             LIMIT %d FOR UPDATE SKIP LOCKED";
+        $params[] = $batchSize;
+        $rows = $this->db->get_results( $this->db->prepare( $reserveSql, ...$params ) );
         if ( empty( $rows ) ) {
             $this->db->query( 'COMMIT' );
             return [];
@@ -101,7 +107,8 @@ class DatabaseQueue implements QueueInterface {
                 json_decode( $row->payload, true ) ?: [],
                 (int) $row->attempts,
                 $leaseToken,
-                $row->payload_hash ? (string) $row->payload_hash : null
+                $row->payload_hash ? (string) $row->payload_hash : null,
+                isset( $row->shard ) ? (int) $row->shard : 0
             );
         }
         $this->db->query( 'COMMIT' );
@@ -117,6 +124,9 @@ class DatabaseQueue implements QueueInterface {
             ],
             [ '%s', '%s' ]
         );
+        if ( $job->shard !== null ) {
+            $this->checkpoints->update( $job->channel, $job->shard, $job->id );
+        }
     }
 
     public function fail( Payload $job, string $error, bool $retryable = true ) : void {
@@ -211,7 +221,7 @@ class DatabaseQueue implements QueueInterface {
         return (int) $this->db->rows_affected;
     }
 
-    public function sweepExpiredLeases( ?string $channel, int $olderThanSeconds ) : array {
+    public function sweepExpiredLeases( ?string $channel, int $olderThanSeconds, ?int $shard = null ) : array {
         $requeued = 0;
         $dead     = 0;
         $threshold = gmdate( 'Y-m-d H:i:s', time() - $olderThanSeconds );
@@ -223,6 +233,10 @@ class DatabaseQueue implements QueueInterface {
             if ( $channel ) {
                 $where   .= ' AND queue = %s';
                 $params[] = $channel;
+            }
+            if ( null !== $shard ) {
+                $where   .= ' AND shard = %d';
+                $params[] = $shard;
             }
             $sql = "SELECT * FROM {$this->table} WHERE {$where} ORDER BY lease_expires_at ASC LIMIT 200 FOR UPDATE SKIP LOCKED";
             $rows = $this->db->get_results( $this->db->prepare( $sql, ...$params ) );
@@ -279,4 +293,21 @@ class DatabaseQueue implements QueueInterface {
         $encoded = wp_json_encode( [ 'channel' => $channel, 'payload' => $payload ] ) ?: '';
         return pack( 'H*', md5( $encoded ) );
     }
+
+    private function determineShard( string $channel, array $payload ) : int {
+        $total = max( 1, Config::totalShards() );
+        $productId   = (int) ( $payload['product_id'] ?? $payload['id'] ?? 0 );
+        $variationId = (int) ( $payload['variation_id'] ?? 0 );
+        if ( $productId <= 0 && isset( $payload['items'][0]['product_id'] ) ) {
+            $productId   = (int) $payload['items'][0]['product_id'];
+            $variationId = (int) ( $payload['items'][0]['variation_id'] ?? 0 );
+        }
+        if ( $productId <= 0 ) {
+            $key = $channel . ':' . ( $payload['payload_hash'] ?? wp_json_encode( $payload ) );
+        } else {
+            $key = sprintf( '%s:%d:%d', $channel, $productId, $variationId );
+        }
+        return (int) ( crc32( $key ) % $total );
+    }
+
 }
