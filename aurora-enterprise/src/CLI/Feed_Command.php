@@ -23,8 +23,12 @@ class Feed_Command extends WP_CLI_Command {
     public function enqueue( array $args, array $assoc_args ) : void {
         $chunkSize = isset( $assoc_args['chunk-size'] ) ? max( 100, (int) $assoc_args['chunk-size'] ) : 1000;
         $guard = new SnapshotVersionGuard();
-        if ( ! $guard->isAligned() ) {
-            WP_CLI::error( 'Snapshot versions not aligned. Run rebuild price/stock/visibility before enqueuing feed.' );
+        $snapshotReport = $guard->report();
+        if ( ! $snapshotReport['aligned'] ) {
+            WP_CLI::error( sprintf( 'Snapshot mismatch: %s', wp_json_encode( $snapshotReport ) ) );
+        }
+        if ( ! empty( $snapshotReport['pending_out_of_range'] ) ) {
+            WP_CLI::error( sprintf( 'Shard mismatch: %s', wp_json_encode( $snapshotReport ) ) );
         }
         $versionManager = new SnapshotVersionManager();
         global $wpdb;
