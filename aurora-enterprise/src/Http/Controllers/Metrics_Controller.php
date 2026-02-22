@@ -128,7 +128,6 @@ class Metrics_Controller {
         }
         return $versions;
     }
-}
 
     private function computeAgeSeconds( ?string $datetime ) : int {
         if ( empty( $datetime ) ) {
