@@ -1,0 +1,8 @@
+# Global ignores
+.DS_Store
+.vscode/
+
+# Dev artifacts
+wordpress/tmp/
+retro-dosbox/retroarch/config/.cache/
+retro-dosbox/retroarch/config/.dbus/
