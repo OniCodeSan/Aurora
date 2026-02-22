@@ -10,6 +10,12 @@ use Aurora\Enterprise\Support\SnapshotVersionGuard;
 use wpdb;
 
 class Dashboard_Controller {
+    private SnapshotVersionGuard $guard;
+
+    public function __construct() {
+        $this->guard = new SnapshotVersionGuard();
+    }
+
     public function register_routes() : void {
         register_rest_route( 'aurora/v1', '/dashboard', [
             'methods'  => 'GET',
@@ -21,6 +27,12 @@ class Dashboard_Controller {
             'methods'  => 'POST',
             'permission_callback' => [ $this, 'can_manage' ],
             'callback' => [ $this, 'trigger_rebuild' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/snapshot/check', [
+            'methods'  => 'GET',
+            'permission_callback' => [ $this, 'can_manage' ],
+            'callback' => [ $this, 'validate_snapshot' ],
         ] );
     }
 
@@ -34,11 +46,15 @@ class Dashboard_Controller {
 
     public function get_dashboard( WP_REST_Request $request ) : WP_REST_Response {
         /** @var wpdb $wpdb */
-
         global $wpdb;
         $queueStats = Queue_Manager::instance()->stats();
         $deadFallback = $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status = 'dead'" ) ?: 0;
-        $overShards = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status='pending' AND shard >= %d", (int) get_option( 'aurora_total_shards', 2 ) ) );
+        $overShards = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status='pending' AND shard >= %d",
+                (int) get_option( 'aurora_total_shards', 2 )
+            )
+        );
         $logs = $wpdb->get_results( "SELECT indexer, level, message, created_at FROM {$wpdb->prefix}product_index_logs ORDER BY id DESC LIMIT 5", ARRAY_A );
         $lastRebuild = [
             'price'      => get_option( 'aurora_last_rebuild_price', '' ),
@@ -46,8 +62,8 @@ class Dashboard_Controller {
             'visibility' => get_option( 'aurora_last_rebuild_visibility', '' ),
         ];
         $cron = new CronStatus();
-        $guard = new \Aurora\Enterprise\Support\SnapshotVersionGuard();
-        $snapshotAligned = $guard->isAligned();
+        $snapshotReport = $this->guard->report();
+
         return new WP_REST_Response( [
             'queue' => [
                 'price'      => $queueStats['price'] ?? 0,
@@ -60,7 +76,7 @@ class Dashboard_Controller {
             'lastRebuild' => $lastRebuild,
             'cron' => $cron->formatted(),
             'cronStatuses' => $cron->statuses(),
-            'snapshotAligned' => $snapshotAligned,
+            'snapshot' => $snapshotReport + [ 'pending_out_of_range' => $overShards ],
         ] );
     }
 
@@ -70,5 +86,16 @@ class Dashboard_Controller {
         }
         wp_schedule_single_event( time(), 'aurora_rebuild_async', [ 'all' ] );
         return new WP_REST_Response( [ 'status' => 'queued' ] );
+    }
+
+    public function validate_snapshot( WP_REST_Request $request ) {
+        $report = $this->guard->report();
+        if ( ! $report['aligned'] ) {
+            return new WP_Error( 'aurora_snapshot_mismatch', __( 'Snapshot cut non allineato.', 'aurora-enterprise' ), $report );
+        }
+        if ( $report['pending_out_of_range'] > 0 ) {
+            return new WP_Error( 'aurora_shard_mismatch', __( 'Shard mismatch: alcuni job sono fuori range.', 'aurora-enterprise' ), $report );
+        }
+        return new WP_REST_Response( $report );
     }
 }

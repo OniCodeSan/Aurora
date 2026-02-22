@@ -26,7 +26,7 @@
         if ( ! state.data ) {
             return '';
         }
-        if ( state.data.snapshotAligned ) {
+        if ( state.data.snapshot?.aligned ) {
             return '<div class="aurora-alert aurora-alert--ok">Snapshot cut allineato</div>';
         }
         return '<div class="aurora-alert aurora-alert--warn">Snapshot cut non allineato: feed bloccato finché price/stock/visibility non condividono la stessa versione.</div>';
@@ -36,8 +36,8 @@
         if ( ! state.data ) {
             return '';
         }
-        if ( state.data.pendingOutOfRange && state.data.pendingOutOfRange > 0 ) {
-            return `<div class="aurora-alert aurora-alert--warn">Shard mismatch: ${ state.data.pendingOutOfRange } job fuori dal range configurato. Aggiorna aurora_total_shards o riallinea la coda.</div>`;
+        if ( state.data.snapshot?.pending_out_of_range && state.data.snapshot.pending_out_of_range > 0 ) {
+            return `<div class="aurora-alert aurora-alert--warn">Shard mismatch: ${ state.data.snapshot.pending_out_of_range } job fuori dal range configurato. Aggiorna aurora_total_shards o riallinea la coda.</div>`;
         }
         return '';
     };
@@ -248,7 +248,7 @@
             } );
         }
 
-        root.query_selectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
+        root.querySelectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
             button.addEventListener( 'click', ( event ) => {
                 const row = event.target.closest( 'tr[data-cron-key]' );
                 const key = row?.dataset?.cronKey;
@@ -264,14 +264,14 @@
                     headers: { 'X-WP-Nonce': auroraDashboard.nonce },
                     data: {
                         key,
-                        interval: intervalInput?.value or '',
-                        status: statusSelect?.value or 'processed',
+                        interval: intervalInput?.value || '',
+                        status: statusSelect?.value || 'processed',
                     },
                 } ).then( ( cronData ) => {
                     state.data.cron = cronData;
                     render();
                 } ).catch( ( error ) => {
-                    window.alert( error.message or 'Errore salvataggio cron' );
+                    window.alert( error.message || 'Errore salvataggio cron' );
                 } ).finally( () => {
                     button.disabled = false;
                 } );
