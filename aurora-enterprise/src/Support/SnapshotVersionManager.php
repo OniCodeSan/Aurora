@@ -16,7 +16,7 @@ class SnapshotVersionManager {
         $this->table = $wpdb->prefix . 'aurora_snapshot_versions';
     }
 
-    public function allocatePendingVersion( string $tableName ) : int {
+    public function beginRebuild( string $tableName ) : int {
         $this->db->query( 'START TRANSACTION' );
         try {
             $this->ensureRow( $tableName );
@@ -31,7 +31,7 @@ class SnapshotVersionManager {
             }
             if ( ! empty( $row->pending_version ) ) {
                 $this->db->query( 'ROLLBACK' );
-                throw new RuntimeException( 'Snapshot batch already pending for ' . $tableName );
+                throw new RuntimeException( 'Snapshot rebuild already pending for ' . $tableName );
             }
             $nextVersion = (int) $row->current_version + 1;
             $now         = current_time( 'mysql', true );
@@ -55,7 +55,24 @@ class SnapshotVersionManager {
         }
     }
 
-    public function activatePendingVersion( string $tableName, int $version ) : void {
+    public function getWriteVersion( string $tableName ) : int {
+        $this->ensureRow( $tableName );
+        $row = $this->db->get_row(
+            $this->db->prepare(
+                "SELECT current_version, pending_version FROM {$this->table} WHERE table_name = %s",
+                $tableName
+            )
+        );
+        if ( ! $row ) {
+            return 1;
+        }
+        if ( ! empty( $row->pending_version ) ) {
+            return (int) $row->pending_version;
+        }
+        return (int) $row->current_version;
+    }
+
+    public function promote( string $tableName ) : void {
         $this->db->query( 'START TRANSACTION' );
         try {
             $row = $this->db->get_row(
@@ -67,16 +84,16 @@ class SnapshotVersionManager {
             if ( ! $row ) {
                 throw new RuntimeException( 'Snapshot metadata missing for ' . $tableName );
             }
-            if ( (int) $row->pending_version !== $version ) {
+            if ( empty( $row->pending_version ) ) {
                 $this->db->query( 'ROLLBACK' );
-                throw new RuntimeException( 'Pending version mismatch for ' . $tableName );
+                throw new RuntimeException( 'No pending snapshot version to promote for ' . $tableName );
             }
             $now = current_time( 'mysql', true );
             $this->db->update(
                 $this->table,
                 [
                     'previous_version' => (int) $row->current_version,
-                    'current_version'  => $version,
+                    'current_version'  => (int) $row->pending_version,
                     'pending_version'  => null,
                     'updated_at'       => $now,
                 ],
@@ -93,20 +110,7 @@ class SnapshotVersionManager {
         }
     }
 
-    public function currentVersion( string $tableName ) : int {
-        $row = $this->db->get_row(
-            $this->db->prepare(
-                "SELECT current_version FROM {$this->table} WHERE table_name = %s",
-                $tableName
-            )
-        );
-        if ( ! $row ) {
-            return 1;
-        }
-        return (int) $row->current_version;
-    }
-
-    public function clearPending( string $tableName ) : void {
+    public function rollback( string $tableName ) : void {
         $this->db->update(
             $this->table,
             [
@@ -117,6 +121,20 @@ class SnapshotVersionManager {
             [ '%s', '%s' ],
             [ '%s' ]
         );
+    }
+
+    public function currentVersion( string $tableName ) : int {
+        $this->ensureRow( $tableName );
+        $row = $this->db->get_row(
+            $this->db->prepare(
+                "SELECT current_version FROM {$this->table} WHERE table_name = %s",
+                $tableName
+            )
+        );
+        if ( ! $row ) {
+            return 1;
+        }
+        return (int) $row->current_version;
     }
 
     private function ensureRow( string $tableName ) : void {

@@ -1,7 +1,6 @@
 <?php
 namespace Aurora\Enterprise\Indexer\Snapshot;
 
-use Aurora\Enterprise\Support\SnapshotVersionManager;
 use RuntimeException;
 use wpdb;
 
@@ -21,9 +20,8 @@ class SnapshotWriter {
     private wpdb $db;
     private string $channel;
     private string $tableName;
-    private SnapshotVersionManager $versions;
 
-    public function __construct( string $channel, SnapshotVersionManager $versions ) {
+    public function __construct( string $channel ) {
         if ( ! isset( self::TABLE_MAP[ $channel ] ) ) {
             throw new RuntimeException( 'Unsupported snapshot channel: ' . $channel );
         }
@@ -31,26 +29,20 @@ class SnapshotWriter {
         $this->db        = $wpdb;
         $this->channel   = $channel;
         $this->tableName = $wpdb->prefix . self::TABLE_MAP[ $channel ];
-        $this->versions  = $versions;
+    }
+
+    public function getTableName() : string {
+        return $this->tableName;
     }
 
     /**
      * @param array<int,array<string,mixed>> $rows
-     * @return array{version:int,count:int}
      */
-    public function persist( array $rows ) : array {
+    public function persist( array $rows, int $version ) : int {
         if ( empty( $rows ) ) {
-            return [ 'version' => $this->versions->currentVersion( $this->tableName ), 'count' => 0 ];
+            return 0;
         }
-        $version = $this->versions->allocatePendingVersion( $this->tableName );
-        try {
-            $count = $this->insertRows( $rows, $version );
-            $this->versions->activatePendingVersion( $this->tableName, $version );
-            return [ 'version' => $version, 'count' => $count ];
-        } catch ( \Throwable $exception ) {
-            $this->versions->clearPending( $this->tableName );
-            throw $exception;
-        }
+        return $this->insertRows( $rows, $version );
     }
 
     /**

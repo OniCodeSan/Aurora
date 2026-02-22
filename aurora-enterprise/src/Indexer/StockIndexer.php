@@ -21,6 +21,7 @@ class StockIndexer extends AbstractIndexer {
     private CachePurger $cache;
     private bool $snapshotEnabled = false;
     private ?SnapshotWriter $snapshotWriter = null;
+    private ?SnapshotVersionManager $snapshotVersions = null;
 
     public function __construct() {
         global $wpdb;
@@ -31,7 +32,8 @@ class StockIndexer extends AbstractIndexer {
         $this->cache   = new CachePurger();
         $this->snapshotEnabled = Config::snapshotV2Enabled();
         if ( $this->snapshotEnabled ) {
-            $this->snapshotWriter = new SnapshotWriter( 'stock', new SnapshotVersionManager() );
+            $this->snapshotVersions = new SnapshotVersionManager();
+            $this->snapshotWriter   = new SnapshotWriter( 'stock' );
         }
     }
 
@@ -46,7 +48,7 @@ class StockIndexer extends AbstractIndexer {
             return;
         }
 
-        if ( $this->snapshotEnabled && $this->snapshotWriter ) {
+        if ( $this->snapshotEnabled && $this->snapshotWriter && $this->snapshotVersions ) {
             $this->processSnapshotBatch( $productIds );
             return;
         }
@@ -70,24 +72,42 @@ class StockIndexer extends AbstractIndexer {
             'fields'         => 'ids',
             'posts_per_page' => -1,
         ] );
-        foreach ( array_chunk( $allIds, 1000 ) as $chunk ) {
+        $chunks = array_chunk( $allIds, 1000 );
+        if ( $this->snapshotEnabled && $this->snapshotWriter && $this->snapshotVersions ) {
+            $table = $this->snapshotWriter->getTableName();
+            $this->snapshotVersions->beginRebuild( $table );
+            try {
+                foreach ( $chunks as $chunk ) {
+                    $jobs = array_map( static fn( $id ) => [ 'product_id' => $id ], $chunk );
+                    $this->processBatch( $jobs );
+                }
+                $this->snapshotVersions->promote( $table );
+            } catch ( \Throwable $exception ) {
+                $this->snapshotVersions->rollback( $table );
+                throw $exception;
+            }
+            return;
+        }
+        foreach ( $chunks as $chunk ) {
             $jobs = array_map( static fn( $id ) => [ 'product_id' => $id ], $chunk );
             $this->processBatch( $jobs );
         }
     }
 
     private function processSnapshotBatch( array $productIds ) : void {
-        if ( ! $this->snapshotWriter ) {
+        if ( ! $this->snapshotWriter || ! $this->snapshotVersions ) {
             return;
         }
-        $rows = $this->buildSnapshotRows( $productIds );
+        $table   = $this->snapshotWriter->getTableName();
+        $version = $this->snapshotVersions->getWriteVersion( $table );
+        $rows    = $this->buildSnapshotRows( $productIds, $version );
         if ( empty( $rows ) ) {
             return;
         }
-        $result = $this->snapshotWriter->persist( $rows );
+        $count = $this->snapshotWriter->persist( $rows, $version );
         $this->logger->info( 'stock', 'Indexed stock snapshot batch', [
-            'count'    => $result['count'],
-            'version'  => $result['version'],
+            'count'    => $count,
+            'version'  => $version,
             'products' => $productIds,
         ] );
         update_option( 'aurora_last_rebuild_stock', current_time( 'mysql', true ), false );
@@ -98,8 +118,8 @@ class StockIndexer extends AbstractIndexer {
         return $this->collectRows( $productIds, $version );
     }
 
-    private function buildSnapshotRows( array $productIds ) : array {
-        return $this->collectRows( $productIds, null );
+    private function buildSnapshotRows( array $productIds, int $version ) : array {
+        return $this->collectRows( $productIds, (string) $version );
     }
 
     private function collectRows( array $productIds, ?string $version ) : array {
