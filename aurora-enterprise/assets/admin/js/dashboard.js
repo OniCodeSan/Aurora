@@ -19,6 +19,7 @@
         deadError: null,
         deadQueue: '',
         retrying: false,
+        totalShards: 0,
     };
 
     const renderSnapshotAlert = () => {
@@ -31,6 +32,16 @@
         return '<div class="aurora-alert aurora-alert--warn">Snapshot cut non allineato: feed bloccato finché price/stock/visibility non condividono la stessa versione.</div>';
     };
 
+    const renderShardAlert = () => {
+        if ( ! state.data ) {
+            return '';
+        }
+        if ( state.data.pendingOutOfRange && state.data.pendingOutOfRange > 0 ) {
+            return `<div class="aurora-alert aurora-alert--warn">Shard mismatch: ${ state.data.pendingOutOfRange } job fuori dal range configurato. Aggiorna aurora_total_shards o riallinea la coda.</div>`;
+        }
+        return '';
+    };
+
     const fetchDashboard = () => {
         return apiFetch( {
             url: auroraDashboard.dashboardUrl,
@@ -39,6 +50,7 @@
             },
         } ).then( ( response ) => {
             state.data = response;
+            state.totalShards = response?.channels?.price?.total_shards || 0;
             return response;
         } );
     };
@@ -110,11 +122,13 @@
         }
 
         const snapshotAlert = renderSnapshotAlert();
+        const shardAlert = renderShardAlert();
 
         const queueCard = `
             <div class="aurora-card">
                 <h2>Code</h2>
                 ${ snapshotAlert }
+                ${ shardAlert }
                 <ul>
                     <li>Price: ${ state.data.queue.price }</li>
                     <li>Stock: ${ state.data.queue.stock }</li>
@@ -234,7 +248,7 @@
             } );
         }
 
-        root.querySelectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
+        root.query_selectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
             button.addEventListener( 'click', ( event ) => {
                 const row = event.target.closest( 'tr[data-cron-key]' );
                 const key = row?.dataset?.cronKey;
@@ -250,14 +264,14 @@
                     headers: { 'X-WP-Nonce': auroraDashboard.nonce },
                     data: {
                         key,
-                        interval: intervalInput?.value || '',
-                        status: statusSelect?.value || 'processed',
+                        interval: intervalInput?.value or '',
+                        status: statusSelect?.value or 'processed',
                     },
                 } ).then( ( cronData ) => {
                     state.data.cron = cronData;
                     render();
                 } ).catch( ( error ) => {
-                    window.alert( error.message || 'Errore salvataggio cron' );
+                    window.alert( error.message or 'Errore salvataggio cron' );
                 } ).finally( () => {
                     button.disabled = false;
                 } );

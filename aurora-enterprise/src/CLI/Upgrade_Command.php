@@ -8,12 +8,16 @@ use Aurora\Enterprise\Queue\Queue_Manager;
 use function current_time;
 
 class Upgrade_Command extends WP_CLI_Command {
+    private SnapshotShardDoctor $doctor;
+
     public function __invoke( array $args, array $assoc_args ) : void {
+        $this->doctor = new SnapshotShardDoctor();
         WP_CLI::log( 'Aurora upgrade starting…' );
         $schema = new Upgrade_Schema();
         $schema->run();
         $options = new Upgrade_Options();
         $options->apply();
+        $this->doctor->checkShards();
         $this->printQueueStats();
         $this->printMetrics();
         WP_CLI::success( 'Aurora upgrade completed.' );
@@ -199,8 +203,30 @@ class Upgrade_Options {
         update_option( 'aurora_snapshot_v2_enabled', 0, false );
         update_option( 'aurora_idempotence_ttl', 900, false );
         update_option( 'aurora_queue_lease_ttl', 60, false );
-        update_option( 'aurora_total_shards', 2, false );
+        if ( ! get_option( 'aurora_total_shards', false ) ) {
+            update_option( 'aurora_total_shards', 2, false );
+        }
         update_option( 'aurora_lease_sweep_cron_enabled', 1, false );
         WP_CLI::log( 'Option defaults applied.' );
+    }
+}
+
+class SnapshotShardDoctor {
+    private wpdb $db;
+
+    public function __construct() {
+        global $wpdb;
+        $this->db = $wpdb;
+    }
+
+    public function checkShards() : void {
+        $total = (int) get_option( 'aurora_total_shards', 2 );
+        $max = (int) $this->db->get_var( "SELECT IFNULL(MAX(shard),0) FROM {$this->db->prefix}product_index_queue" );
+        $outOfRange = (int) $this->db->get_var( $this->db->prepare( "SELECT COUNT(*) FROM {$this->db->prefix}product_index_queue WHERE status='pending' AND shard >= %d", $total ) );
+        if ( $outOfRange > 0 || $max >= $total ) {
+            WP_CLI::warning( sprintf( 'Shard mismatch: total_shards=%d, max_shard_seen=%d, pending_out_of_range=%d', $total, $max, $outOfRange ) );
+        } else {
+            WP_CLI::log( sprintf( 'Shard check OK (total=%d, max_seen=%d)', $total, $max ) );
+        }
     }
 }

@@ -7,6 +7,7 @@ use WP_Error;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Support\CronStatus;
 use Aurora\Enterprise\Support\SnapshotVersionGuard;
+use wpdb;
 
 class Dashboard_Controller {
     public function register_routes() : void {
@@ -32,9 +33,12 @@ class Dashboard_Controller {
     }
 
     public function get_dashboard( WP_REST_Request $request ) : WP_REST_Response {
+        /** @var wpdb $wpdb */
+
         global $wpdb;
         $queueStats = Queue_Manager::instance()->stats();
         $deadFallback = $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status = 'dead'" ) ?: 0;
+        $overShards = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status='pending' AND shard >= %d", (int) get_option( 'aurora_total_shards', 2 ) ) );
         $logs = $wpdb->get_results( "SELECT indexer, level, message, created_at FROM {$wpdb->prefix}product_index_logs ORDER BY id DESC LIMIT 5", ARRAY_A );
         $lastRebuild = [
             'price'      => get_option( 'aurora_last_rebuild_price', '' ),
