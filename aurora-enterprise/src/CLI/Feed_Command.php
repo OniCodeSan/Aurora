@@ -5,6 +5,7 @@ use WP_CLI_Command;
 use WP_CLI;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Support\SnapshotVersionManager;
+use Aurora\Enterprise\Support\SnapshotVersionGuard;
 use function sanitize_key;
 
 class Feed_Command extends WP_CLI_Command {
@@ -21,18 +22,14 @@ class Feed_Command extends WP_CLI_Command {
      */
     public function enqueue( array $args, array $assoc_args ) : void {
         $chunkSize = isset( $assoc_args['chunk-size'] ) ? max( 100, (int) $assoc_args['chunk-size'] ) : 1000;
+        $guard = new SnapshotVersionGuard();
+        if ( ! $guard->isAligned() ) {
+            WP_CLI::error( 'Snapshot versions not aligned. Run rebuild price/stock/visibility before enqueuing feed.' );
+        }
         $versionManager = new SnapshotVersionManager();
         global $wpdb;
-        $tables = [
-            'price'      => $versionManager->currentVersion( $wpdb->prefix . 'aurora_price_snapshot' ),
-            'stock'      => $versionManager->currentVersion( $wpdb->prefix . 'aurora_stock_snapshot' ),
-            'visibility' => $versionManager->currentVersion( $wpdb->prefix . 'aurora_visibility_snapshot' ),
-        ];
-        $unique = array_unique( array_values( $tables ) );
-        if ( count( $unique ) !== 1 ) {
-            WP_CLI::error( sprintf( 'Snapshot versions not aligned (price=%d, stock=%d, visibility=%d).', $tables['price'], $tables['stock'], $tables['visibility'] ) );
-        }
-        $cutVersion = (int) $unique[0];
+        $tableName = $wpdb->prefix . 'aurora_price_snapshot';
+        $cutVersion = $versionManager->currentVersion( $tableName );
         WP_CLI::log( sprintf( 'Using snapshot cut version %d for feed.', $cutVersion ) );
         $feedId    = isset( $assoc_args['feed-id'] ) ? sanitize_key( $assoc_args['feed-id'] ) : wp_generate_uuid4();
 

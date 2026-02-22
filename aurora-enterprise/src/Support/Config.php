@@ -4,6 +4,8 @@ namespace Aurora\Enterprise\Support;
 use function get_option;
 
 class Config {
+    public const SNAPSHOT_OPTION = 'aurora_snapshot_v2_enabled';
+
     public static function redisConfig() : array {
         $host = defined( 'AURORA_REDIS_HOST' ) ? AURORA_REDIS_HOST : '127.0.0.1';
         $port = defined( 'AURORA_REDIS_PORT' ) ? (int) AURORA_REDIS_PORT : 6379;
@@ -16,7 +18,7 @@ class Config {
         if ( defined( 'AURORA_SNAPSHOT_V2' ) ) {
             return (bool) AURORA_SNAPSHOT_V2;
         }
-        $option = get_option( 'aurora_snapshot_v2_enabled', false );
+        $option = get_option( self::SNAPSHOT_OPTION, false );
         return (bool) $option;
     }
 

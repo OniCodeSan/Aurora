@@ -21,6 +21,16 @@
         retrying: false,
     };
 
+    const renderSnapshotAlert = () => {
+        if ( ! state.data ) {
+            return '';
+        }
+        if ( state.data.snapshotAligned ) {
+            return '<div class="aurora-alert aurora-alert--ok">Snapshot cut allineato</div>';
+        }
+        return '<div class="aurora-alert aurora-alert--warn">Snapshot cut non allineato: feed bloccato finché price/stock/visibility non condividono la stessa versione.</div>';
+    };
+
     const fetchDashboard = () => {
         return apiFetch( {
             url: auroraDashboard.dashboardUrl,
@@ -99,9 +109,12 @@
             return;
         }
 
+        const snapshotAlert = renderSnapshotAlert();
+
         const queueCard = `
             <div class="aurora-card">
                 <h2>Code</h2>
+                ${ snapshotAlert }
                 <ul>
                     <li>Price: ${ state.data.queue.price }</li>
                     <li>Stock: ${ state.data.queue.stock }</li>

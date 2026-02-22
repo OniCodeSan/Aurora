@@ -6,6 +6,7 @@ use WP_REST_Response;
 use WP_Error;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Support\CronStatus;
+use Aurora\Enterprise\Support\SnapshotVersionGuard;
 
 class Dashboard_Controller {
     public function register_routes() : void {
@@ -41,6 +42,8 @@ class Dashboard_Controller {
             'visibility' => get_option( 'aurora_last_rebuild_visibility', '' ),
         ];
         $cron = new CronStatus();
+        $guard = new \Aurora\Enterprise\Support\SnapshotVersionGuard();
+        $snapshotAligned = $guard->isAligned();
         return new WP_REST_Response( [
             'queue' => [
                 'price'      => $queueStats['price'] ?? 0,
@@ -53,6 +56,7 @@ class Dashboard_Controller {
             'lastRebuild' => $lastRebuild,
             'cron' => $cron->formatted(),
             'cronStatuses' => $cron->statuses(),
+            'snapshotAligned' => $snapshotAligned,
         ] );
     }
 
