@@ -10,7 +10,7 @@ When running WP-CLI against this dev stack on WordPress < 6.8, WooCommerce can b
 The script wraps `docker compose exec worker wp --skip-plugins=woocommerce` from the WordPress project root.
 
 ## Upgrade Script
-Run `./bin/aurora-upgrade.sh` from repo root to apply migrations + option defaults + sanity checks. Requires the `wordpress` docker stack running.
+Run `wp aurora upgrade` (or `./bin/aurora-upgrade.sh`) to apply migrations + option defaults + sanity checks. Requires the `wordpress` docker stack running.
 
 ### WP-CLI usage
 - Use `./bin/wp-safe.sh` **only** for commands that can skip WooCommerce (admin/read-only tasks).
