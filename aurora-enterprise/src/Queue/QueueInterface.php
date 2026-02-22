@@ -15,7 +15,7 @@ interface QueueInterface {
      * @param int|null $shard
      * @return array<int,Payload>
      */
-    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null ) : array;
+    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null, bool $debug = false ) : array;
 
     public function ack( Payload $job ) : void;
 

@@ -9,6 +9,9 @@ use function wp_generate_uuid4;
 use WC_Product;
 use Aurora\Enterprise\Support\Logger;
 use Aurora\Enterprise\Support\CachePurger;
+use Aurora\Enterprise\Support\Config;
+use Aurora\Enterprise\Support\SnapshotVersionManager;
+use Aurora\Enterprise\Indexer\Snapshot\SnapshotWriter;
 use wpdb;
 
 class PriceIndexer extends AbstractIndexer {
@@ -17,6 +20,8 @@ class PriceIndexer extends AbstractIndexer {
     private string $staging;
     private Logger $logger;
     private CachePurger $cache;
+    private bool $snapshotEnabled = false;
+    private ?SnapshotWriter $snapshotWriter = null;
 
     public function __construct() {
         global $wpdb;
@@ -25,6 +30,10 @@ class PriceIndexer extends AbstractIndexer {
         $this->staging = $wpdb->prefix . 'product_price_index_staging';
         $this->logger  = new Logger();
         $this->cache   = new CachePurger();
+        $this->snapshotEnabled = Config::snapshotV2Enabled();
+        if ( $this->snapshotEnabled ) {
+            $this->snapshotWriter = new SnapshotWriter( 'price', new SnapshotVersionManager() );
+        }
     }
 
     public function getChannel() : string {
@@ -35,6 +44,11 @@ class PriceIndexer extends AbstractIndexer {
         $productIds = array_unique( array_map( static fn( array $job ) => (int) ( $job['product_id'] ?? 0 ), $jobs ) );
         $productIds = array_values( array_filter( $productIds ) );
         if ( empty( $productIds ) ) {
+            return;
+        }
+
+        if ( $this->snapshotEnabled && $this->snapshotWriter ) {
+            $this->processSnapshotBatch( $productIds );
             return;
         }
 
@@ -51,6 +65,24 @@ class PriceIndexer extends AbstractIndexer {
             'count' => count( $rows ),
             'products' => $productIds,
             'version'  => $version,
+        ] );
+        update_option( 'aurora_last_rebuild_price', current_time( 'mysql', true ), false );
+        $this->cache->purgeProducts( $productIds );
+    }
+
+    private function processSnapshotBatch( array $productIds ) : void {
+        if ( ! $this->snapshotWriter ) {
+            return;
+        }
+        $rows = $this->buildSnapshotRows( $productIds );
+        if ( empty( $rows ) ) {
+            return;
+        }
+        $result = $this->snapshotWriter->persist( $rows );
+        $this->logger->info( 'price', 'Indexed price snapshot batch', [
+            'count'    => $result['count'],
+            'version'  => $result['version'],
+            'products' => $productIds,
         ] );
         update_option( 'aurora_last_rebuild_price', current_time( 'mysql', true ), false );
         $this->cache->purgeProducts( $productIds );
@@ -74,6 +106,20 @@ class PriceIndexer extends AbstractIndexer {
      * @return array<int,array<string,mixed>>
      */
     private function buildRows( array $productIds, string $version ) : array {
+        return $this->collectRows( $productIds, $version );
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildSnapshotRows( array $productIds ) : array {
+        return $this->collectRows( $productIds, null );
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function collectRows( array $productIds, ?string $version ) : array {
         $rows = [];
         foreach ( $productIds as $product_id ) {
             $product = wc_get_product( $product_id );
@@ -93,12 +139,12 @@ class PriceIndexer extends AbstractIndexer {
         return array_filter( $rows );
     }
 
-    private function mapProduct( WC_Product $product, string $version ) : array {
-        $regular  = $product->get_regular_price();
-        $sale     = $product->get_sale_price();
+    private function mapProduct( WC_Product $product, ?string $version ) : array {
+        $regular   = $product->get_regular_price();
+        $sale      = $product->get_sale_price();
         $effective = $product->get_price();
-        $sku      = $product->get_sku() ?: (string) $product->get_id();
-        return [
+        $sku       = $product->get_sku() ?: (string) $product->get_id();
+        $row       = [
             'product_id'      => $product->get_parent_id() ?: $product->get_id(),
             'variation_id'    => $product->is_type( 'variation' ) ? $product->get_id() : 0,
             'sku'             => $sku,
@@ -107,8 +153,13 @@ class PriceIndexer extends AbstractIndexer {
             'sale_price'      => $sale !== '' ? (float) $sale : null,
             'effective_price' => $effective !== '' ? (float) $effective : null,
             'margin_percent'  => null,
-            'version'         => $version,
+            'scope_region'    => 'default',
+            'scope_channel'   => 'default',
         ];
+        if ( null !== $version ) {
+            $row['version'] = $version;
+        }
+        return $row;
     }
 
     private function writeStaging( string $batchId, array $rows ) : void {

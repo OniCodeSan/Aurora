@@ -39,8 +39,9 @@ class Dashboard {
         wp_enqueue_style( 'aurora-enterprise-admin', plugins_url( 'assets/admin/css/dashboard.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], AURORA_ENTERPRISE_VERSION );
         wp_enqueue_script( 'aurora-enterprise-admin', plugins_url( 'assets/admin/js/dashboard.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [ 'wp-element', 'wp-api-fetch' ], AURORA_ENTERPRISE_VERSION, true );
         wp_localize_script( 'aurora-enterprise-admin', 'auroraDashboard', [
-            'restUrl' => rest_url( 'aurora/v1/dashboard' ),
-            'nonce'   => wp_create_nonce( 'wp_rest' ),
+            'restBase'      => trailingslashit( rest_url( 'aurora/v1' ) ),
+            'dashboardUrl'  => rest_url( 'aurora/v1/dashboard' ),
+            'nonce'         => wp_create_nonce( 'wp_rest' ),
         ] );
     }
 }

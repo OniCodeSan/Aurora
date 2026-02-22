@@ -32,8 +32,8 @@ class Dashboard_Controller {
 
     public function get_dashboard( WP_REST_Request $request ) : WP_REST_Response {
         global $wpdb;
-        $queue = Queue_Manager::instance()->stats();
-        $deadCount = $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status = 'dead'" ) ?: 0;
+        $queueStats = Queue_Manager::instance()->stats();
+        $deadFallback = $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status = 'dead'" ) ?: 0;
         $logs = $wpdb->get_results( "SELECT indexer, level, message, created_at FROM {$wpdb->prefix}product_index_logs ORDER BY id DESC LIMIT 5", ARRAY_A );
         $lastRebuild = [
             'price'      => get_option( 'aurora_last_rebuild_price', '' ),
@@ -43,10 +43,11 @@ class Dashboard_Controller {
         $cron = new CronStatus();
         return new WP_REST_Response( [
             'queue' => [
-                'price'      => $queue['price'] ?? 0,
-                'stock'      => $queue['stock'] ?? 0,
-                'visibility' => $queue['visibility'] ?? 0,
-                'dead'       => (int) $deadCount,
+                'price'      => $queueStats['price'] ?? 0,
+                'stock'      => $queueStats['stock'] ?? 0,
+                'visibility' => $queueStats['visibility'] ?? 0,
+                'feed'       => $queueStats['feed'] ?? 0,
+                'dead'       => isset( $queueStats['dead'] ) ? (int) $queueStats['dead'] : (int) $deadFallback,
             ],
             'logs' => $logs,
             'lastRebuild' => $lastRebuild,

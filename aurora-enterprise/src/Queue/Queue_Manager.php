@@ -45,8 +45,8 @@ class Queue_Manager implements QueueInterface {
         return $this->driver->enqueue( $channel, $payload );
     }
 
-    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null ) : array {
-        return $this->driver->reserveBatch( $channel, $batchSize, $shard );
+    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null, bool $debug = false ) : array {
+        return $this->driver->reserveBatch( $channel, $batchSize, $shard, $debug );
     }
 
     public function ack( Payload $job ) : void {

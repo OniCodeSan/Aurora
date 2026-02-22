@@ -23,7 +23,7 @@
 
     const fetchDashboard = () => {
         return apiFetch( {
-            url: auroraDashboard.restUrl,
+            url: auroraDashboard.dashboardUrl,
             headers: {
                 'X-WP-Nonce': auroraDashboard.nonce,
             },
@@ -39,10 +39,9 @@
         state.deadQueue = queue;
         render();
         const qs = queue ? `?queue=${ encodeURIComponent( queue ) }` : '';
-        const url = new window.URL( auroraDashboard.restUrl );
-        url.pathname = `${ url.pathname.replace( /\/$/, '' ) }/queue/dead${ qs }`;
+        const apiUrl = `${ auroraDashboard.restBase }queue/dead${ qs }`;
         return apiFetch( {
-            url: url.toString(),
+            url: apiUrl,
             headers: { 'X-WP-Nonce': auroraDashboard.nonce },
         } ).then( ( response ) => {
             state.deadJobs = response?.jobs || [];
@@ -61,10 +60,9 @@
         }
         state.retrying = true;
         render();
-        const url = new window.URL( auroraDashboard.restUrl );
-        url.pathname = `${ url.pathname.replace( /\/$/, '' ) }/queue/retry`;
+        const apiUrl = `${ auroraDashboard.restBase }queue/retry`;
         apiFetch( {
-            url: url.toString(),
+            url: apiUrl,
             method: 'POST',
             headers: { 'X-WP-Nonce': auroraDashboard.nonce },
             data: {
@@ -210,35 +208,70 @@
                 apiFetch( {
                     path: '/aurora/v1/rebuild',
                     method: 'POST',
-                    headersomidou: auroraDashboard.nonce,
-                        },
-                    } ).then( () => {
-                        rebuildBtn.innerText = 'Avviato';
-                    } ).catch( ( error ) => {
-                        window.alert( error.message || 'Errore rebuild' );
-                    } ).finally( () => {
-                        rebuildBtn.disabled = false;
-                    } );
+                    headers: {
+                        'X-WP-Nonce': auroraDashboard.nonce,
+                    },
+                } ).then( () => {
+                    rebuildBtn.innerText = 'Avviato';
+                } ).catch( ( error ) => {
+                    window.alert( error.message || 'Errore rebuild' );
+                } ).finally( () => {
+                    rebuildBtn.disabled = false;
                 } );
-            }
+            } );
+        }
 
-            root.querySelectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
-                button.addEventListener( 'click', ( event ) => {
-                    const row = event.target.closest( 'tr[data-cron-key]' );
-                    const key = row?.dataset?.cronKey;
-                    if ( ! key ) {
-                        return;
-                    }
-                    const intervalInput = row.querySelector( '.aurora-cron-interval' );
-                    const statusSelect = row.query_selector( '.aurora-cron-status' );
-                    button.disabled = true;
-                    apiFetch( {
-                        path: '/aurora/v1/cron',
-                        method: 'POST',
-                        headers: { 'X-WP-Nonce': auroraDashboard.nonce },
-                        data: {
-                            key,
-                            interval: intervalInput?.value || '',
-                            status: statusSelect?.value || 'processed',
-                        },
-                    } ).then( ( cronData ) => 上 -- rest omitted etc
+        root.querySelectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
+            button.addEventListener( 'click', ( event ) => {
+                const row = event.target.closest( 'tr[data-cron-key]' );
+                const key = row?.dataset?.cronKey;
+                if ( ! key ) {
+                    return;
+                }
+                const intervalInput = row.querySelector( '.aurora-cron-interval' );
+                const statusSelect = row.querySelector( '.aurora-cron-status' );
+                button.disabled = true;
+                apiFetch( {
+                    path: '/aurora/v1/cron',
+                    method: 'POST',
+                    headers: { 'X-WP-Nonce': auroraDashboard.nonce },
+                    data: {
+                        key,
+                        interval: intervalInput?.value || '',
+                        status: statusSelect?.value || 'processed',
+                    },
+                } ).then( ( cronData ) => {
+                    state.data.cron = cronData;
+                    render();
+                } ).catch( ( error ) => {
+                    window.alert( error.message || 'Errore salvataggio cron' );
+                } ).finally( () => {
+                    button.disabled = false;
+                } );
+            } );
+        } );
+
+        const queueSelect = document.getElementById( 'aurora-dead-queue' );
+        if ( queueSelect ) {
+            queueSelect.addEventListener( 'change', ( event ) => {
+                const queue = event.target.value;
+                fetchDeadJobs( queue );
+            } );
+        }
+
+        const retryBtn = document.getElementById( 'aurora-retry-dead' );
+        if ( retryBtn ) {
+            retryBtn.addEventListener( 'click', retryDead );
+        }
+    };
+
+    // bootstrap fetches
+    Promise.all( [ fetchDashboard(), fetchDeadJobs() ] ).then( () => {
+        state.loading = false;
+        render();
+    } ).catch( ( error ) => {
+        state.loading = false;
+        state.error = error.message || 'Errore caricamento dashboard';
+        render();
+    } );
+}() );

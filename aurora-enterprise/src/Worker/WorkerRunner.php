@@ -26,14 +26,16 @@ class WorkerRunner {
     private ?int $simulateCrashAfter;
     private ?int $shardFilter;
     private int $totalShards;
+    private bool $debug;
 
-    public function __construct( string $target = 'all', int $batchSize = 750, int $maxLoops = 1, ?int $simulateCrashAfter = null, ?int $shardFilter = null, ?int $totalShards = null ) {
+    public function __construct( string $target = 'all', int $batchSize = 750, int $maxLoops = 1, ?int $simulateCrashAfter = null, ?int $shardFilter = null, ?int $totalShards = null, bool $debug = false ) {
         $this->target              = $target;
         $this->batchSize           = $batchSize;
         $this->maxLoops            = $maxLoops;
         $this->simulateCrashAfter  = $simulateCrashAfter;
         $this->shardFilter         = $shardFilter;
         $this->totalShards         = $totalShards ?? Config::totalShards();
+        $this->debug                = $debug;
     }
 
     public function run() : int {
@@ -53,18 +55,39 @@ class WorkerRunner {
                 }
 
                 $requestedBatch = $this->determineBatchSize( $processed );
+                if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                    \WP_CLI::log( sprintf( 'worker.debug determineBatchSize=%d processed=%d simulate_after=%s', $requestedBatch, $processed, var_export( $this->simulateCrashAfter, true ) ) );
+                }
+                if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                    \WP_CLI::log( sprintf( 'worker.debug determineBatchSize=%d processed=%d simulate_after=%s', $requestedBatch, $processed, var_export( $this->simulateCrashAfter, true ) ) );
+                }
                 if ( 0 === $requestedBatch ) {
                     return $processed;
                 }
 
-                $jobs = $queue->reserveBatch( $indexer->getChannel(), $requestedBatch, $this->shardFilter );
+                $jobs = $queue->reserveBatch( $indexer->getChannel(), $requestedBatch, $this->shardFilter, $this->debug );
                 if ( empty( $jobs ) ) {
+                    if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                        \WP_CLI::log( sprintf( 'worker.debug reserve returned 0 jobs channel=%s shard=%s total_shards=%d batch=%d now=%s',
+                            $indexer->getChannel(),
+                            null === $this->shardFilter ? 'all' : (string) $this->shardFilter,
+                            $this->totalShards,
+                            $requestedBatch,
+                            current_time( 'mysql', true )
+                        ) );
+                    }
                     continue;
+                }
+                                if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                    \WP_CLI::log( sprintf( 'worker.debug batch_size=%d channel=%s', count( $jobs ), $indexer->getChannel() ) );
                 }
                 $payloads = array_map( static fn( $job ) => $job->data, $jobs );
                 try {
                     $indexer->processBatch( $payloads );
                     if ( $this->shouldSimulateCrash( $processed, count( $jobs ) ) ) {
+                        if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                            \WP_CLI::log( sprintf( 'worker.debug simulate trigger processed=%d size=%d', $processed, count( $jobs ) ) );
+                        }
                         $this->expireLeasesForJobs( $jobs );
                         throw new CrashSimulationException( sprintf( 'Simulated crash after %d jobs', (int) $this->simulateCrashAfter ) );
                     }
@@ -72,10 +95,19 @@ class WorkerRunner {
                         $queue->ack( $job );
                     }
                     $cronStatus->markRun( $key . '_worker' );
-                    $processed += count( $jobs );
+                                        $processed += count( $jobs );
+                    if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                        \WP_CLI::log( sprintf( 'worker.debug processed_total=%d', $processed ) );
+                    }
                 } catch ( CrashSimulationException $simulation ) {
+                    if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                        \WP_CLI::log( 'worker.debug crash simulation triggered' );
+                    }
                     throw $simulation;
                 } catch ( \Throwable $exception ) {
+                    if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+                        \WP_CLI::log( sprintf( 'worker.debug exception=%s', $exception->getMessage() ) );
+                    }
                     foreach ( $jobs as $job ) {
                         $queue->fail( $job, $exception->getMessage(), true );
                     }
@@ -117,6 +149,9 @@ class WorkerRunner {
     }
 
     private function shouldSimulateCrash( int $processed, int $processedNow ) : bool {
+        if ( $this->debug && class_exists( '\WP_CLI' ) ) {
+            \WP_CLI::log( sprintf( 'worker.debug shouldSimulateCrash inputs processed=%d processedNow=%d simulate_after=%s', $processed, $processedNow, var_export( $this->simulateCrashAfter, true ) ) );
+        }
         if ( null === $this->simulateCrashAfter ) {
             return false;
         }

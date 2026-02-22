@@ -3,6 +3,7 @@ namespace Aurora\Enterprise\Queue;
 
 use Aurora\Enterprise\Support\Config;
 use Aurora\Enterprise\Support\Runtime_Stats;
+use WP_CLI;
 use Aurora\Enterprise\Support\CheckpointStore;
 use function current_time;
 use function gmdate;
@@ -63,23 +64,31 @@ class DatabaseQueue implements QueueInterface {
         return $job_id;
     }
 
-    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null ) : array {
+    public function reserveBatch( string $channel, int $batchSize = 500, ?int $shard = null, bool $debug = false ) : array {
         $now = current_time( 'mysql', true );
         $this->db->query( 'START TRANSACTION' );
-        $reserveSql = "SELECT * FROM {$this->table}
-             WHERE queue = %s
-               AND status = 'pending'
-               AND available_at <= %s";
-        $params = [ $channel, $now ];
+        $where = "queue = %s AND status = 'pending' AND available_at <= %s";
+        $baseParams = [ $channel, $now ];
         if ( null !== $shard ) {
-            $reserveSql .= ' AND shard = %d';
-            $params[] = $shard;
+            $where      .= ' AND shard = %d';
+            $baseParams[] = $shard;
         }
-        $reserveSql .= "
+        $reserveSql = "SELECT * FROM {$this->table} WHERE {$where}
              ORDER BY priority DESC, available_at ASC, id ASC
              LIMIT %d FOR UPDATE SKIP LOCKED";
-        $params[] = $batchSize;
-        $rows = $this->db->get_results( $this->db->prepare( $reserveSql, ...$params ) );
+        $reserveParams = array_merge( $baseParams, [ $batchSize ] );
+        $prepared = $this->db->prepare( $reserveSql, ...$reserveParams );
+        if ( $debug && class_exists( '\WP_CLI' ) ) {
+            WP_CLI::log( sprintf( 'reserve.debug sql=%s', $prepared ) );
+            $countSql = "SELECT COUNT(*) FROM {$this->table} WHERE {$where}";
+            $countPrepared = $this->db->prepare( $countSql, ...$baseParams );
+            $count = (int) $this->db->get_var( $countPrepared );
+            WP_CLI::log( sprintf( 'reserve.debug count=%d', $count ) );
+        }
+        $rows = $this->db->get_results( $prepared );
+        if ( $debug && class_exists( '\WP_CLI' ) ) {
+            WP_CLI::log( sprintf( 'reserve.debug rows=%d error=%s', count( $rows ), $this->db->last_error ?: 'none' ) );
+        }
         if ( empty( $rows ) ) {
             $this->db->query( 'COMMIT' );
             return [];
