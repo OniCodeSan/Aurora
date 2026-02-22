@@ -7,6 +7,7 @@ use WP_Error;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Support\CronStatus;
 use Aurora\Enterprise\Support\SnapshotVersionGuard;
+use Aurora\Enterprise\Support\Config;
 use wpdb;
 
 class Dashboard_Controller {
@@ -52,7 +53,7 @@ class Dashboard_Controller {
         $overShards = (int) $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT COUNT(*) FROM {$wpdb->prefix}product_index_queue WHERE status='pending' AND shard >= %d",
-                (int) get_option( 'aurora_total_shards', 2 )
+Config::totalShards()
             )
         );
         $logs = $wpdb->get_results( "SELECT indexer, level, message, created_at FROM {$wpdb->prefix}product_index_logs ORDER BY id DESC LIMIT 5", ARRAY_A );
@@ -76,7 +77,7 @@ class Dashboard_Controller {
             'lastRebuild' => $lastRebuild,
             'cron' => $cron->formatted(),
             'cronStatuses' => $cron->statuses(),
-            'snapshot' => $snapshotReport + [ 'pending_out_of_range' => $overShards ],
+            'snapshot' => array_merge( $snapshotReport, [ 'pending_out_of_range' => $overShards ] ),
         ] );
     }
 

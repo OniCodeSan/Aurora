@@ -5,6 +5,7 @@ use WP_CLI_Command;
 use WP_CLI;
 use wpdb;
 use Aurora\Enterprise\Support\Config;
+use Aurora\Enterprise\Queue\ShardResolver;
 
 class Queue_Backfill_Shards_Command extends WP_CLI_Command {
     /**
@@ -40,9 +41,8 @@ class Queue_Backfill_Shards_Command extends WP_CLI_Command {
             }
             foreach ( $rows as $row ) {
                 $payload = json_decode( $row['payload'], true ) ?: [];
-                $product = (int) ( $payload['product_id'] ?? $payload['id'] ?? 0 );
-                $variation = (int) ( $payload['variation_id'] ?? 0 );
-                $shard = $this->computeShard( $product, $variation, $total );
+                $channel = $payload['queue'] ?? 'price';
+                $shard = ShardResolver::determine( $channel, $payload, $total );
                 $wpdb->update( $table, [ 'shard' => $shard ], [ 'id' => (int) $row['id'] ], [ '%d' ], [ '%d' ] );
                 $lastId = (int) $row['id'];
                 $processed++;
@@ -53,8 +53,4 @@ class Queue_Backfill_Shards_Command extends WP_CLI_Command {
         WP_CLI::success( sprintf( 'Backfill completed. Total rows: %d (shards=%d, mode=%s).', $processed, $total, $mode ) );
     }
 
-    private function computeShard( int $productId, int $variationId, int $total ) : int {
-        $key = sprintf( '%d:%d', $productId, $variationId );
-        return (int) ( crc32( $key ) % $total );
-    }
 }

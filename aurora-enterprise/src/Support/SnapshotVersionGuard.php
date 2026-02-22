@@ -2,6 +2,8 @@
 namespace Aurora\Enterprise\Support;
 
 use wpdb;
+use Aurora\Enterprise\Support\Config;
+
 
 class SnapshotVersionGuard {
     private wpdb $db;
@@ -62,7 +64,7 @@ class SnapshotVersionGuard {
     }
 
     private function pendingOutOfRange() : int {
-        $total = (int) get_option( 'aurora_total_shards', 2 );
+        $total = Config::totalShards();
         return (int) $this->db->get_var(
             $this->db->prepare(
                 "SELECT COUNT(*) FROM {$this->db->prefix}product_index_queue WHERE status='pending' AND shard >= %d",

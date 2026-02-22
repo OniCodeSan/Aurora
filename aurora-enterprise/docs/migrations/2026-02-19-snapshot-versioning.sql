@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS aurora_price_snapshot (
     margin_percent DECIMAL(7,2) NULL,
     hash BINARY(16) NOT NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (product_id, scope_region, scope_channel, version),
+    PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
     KEY idx_version (version)
 ) ENGINE=InnoDB;
 
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS aurora_stock_snapshot (
     warehouse VARCHAR(64) NULL,
     hash BINARY(16) NOT NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (product_id, scope_region, scope_channel, version),
+    PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
     KEY idx_version (version)
 ) ENGINE=InnoDB;
 
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS aurora_visibility_snapshot (
     channel_mask BIGINT UNSIGNED NOT NULL DEFAULT 0,
     hash BINARY(16) NOT NULL,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (product_id, scope_region, scope_channel, version),
+    PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
     KEY idx_version (version)
 ) ENGINE=InnoDB;
 
@@ -71,3 +71,10 @@ CREATE TABLE IF NOT EXISTS aurora_idempotence_cache (
 );
 
 COMMIT;
+
+ALTER TABLE aurora_price_snapshot DROP PRIMARY KEY,
+    ADD PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version);
+ALTER TABLE aurora_stock_snapshot DROP PRIMARY KEY,
+    ADD PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version);
+ALTER TABLE aurora_visibility_snapshot DROP PRIMARY KEY,
+    ADD PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version);

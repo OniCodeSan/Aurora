@@ -85,7 +85,7 @@ class Upgrade_Schema {
                 margin_percent DECIMAL(7,2) NULL,
                 hash BINARY(16) NOT NULL,
                 updated_at DATETIME NOT NULL,
-                PRIMARY KEY (product_id, scope_region, scope_channel, version),
+                PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
                 KEY idx_version (version)
             ) {$charset};",
             'aurora_stock_snapshot' => "CREATE TABLE {$this->prefix}aurora_stock_snapshot (
@@ -100,7 +100,7 @@ class Upgrade_Schema {
                 warehouse VARCHAR(64) NULL,
                 hash BINARY(16) NOT NULL,
                 updated_at DATETIME NOT NULL,
-                PRIMARY KEY (product_id, scope_region, scope_channel, version),
+                PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
                 KEY idx_version (version)
             ) {$charset};",
             'aurora_visibility_snapshot' => "CREATE TABLE {$this->prefix}aurora_visibility_snapshot (
@@ -115,7 +115,7 @@ class Upgrade_Schema {
                 channel_mask BIGINT UNSIGNED NOT NULL DEFAULT 0,
                 hash BINARY(16) NOT NULL,
                 updated_at DATETIME NOT NULL,
-                PRIMARY KEY (product_id, scope_region, scope_channel, version),
+                PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
                 KEY idx_version (version)
             ) {$charset};",
             'aurora_idempotence_cache' => "CREATE TABLE {$this->prefix}aurora_idempotence_cache (
@@ -135,8 +135,25 @@ class Upgrade_Schema {
         ];
         foreach ( $tables as $name => $sql ) {
             dbDelta( $sql );
+            $this->ensurePrimaryKey( $name );
             WP_CLI::log( sprintf( 'Ensured table %s', $name ) );
         }
+    }
+
+    private function ensurePrimaryKey( string $tableKey ) : void {
+        $watch = [ 'aurora_price_snapshot', 'aurora_stock_snapshot', 'aurora_visibility_snapshot' ];
+        if ( ! in_array( $tableKey, $watch, true ) ) {
+            return;
+        }
+        $table = $this->prefix . $tableKey;
+        $primaryColumns = $this->db->get_col( "SHOW KEYS FROM {$table} WHERE Key_name = 'PRIMARY'", 4 );
+        $expected = [ 'product_id', 'variation_id', 'scope_region', 'scope_channel', 'version' ];
+        if ( $primaryColumns === $expected ) {
+            return;
+        }
+        $this->db->query( "ALTER TABLE {$table} DROP PRIMARY KEY" );
+        $this->db->query( "ALTER TABLE {$table} ADD PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version)" );
+        WP_CLI::log( sprintf( 'Adjusted primary key for %s', $tableKey ) );
     }
 
     private function alterQueueTable() : void {
