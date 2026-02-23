@@ -24,6 +24,7 @@ use Aurora\Enterprise\Http\Controllers\Dashboard_Controller;
 use Aurora\Enterprise\Http\Controllers\Queue_Controller;
 use Aurora\Enterprise\Http\Controllers\Metrics_Controller;
 use Aurora\Enterprise\Ops\Rest\Ops_Controller;
+use Aurora\Enterprise\Admin\System_Status_Page;
 use Aurora\Enterprise\Support\Config;
 use Aurora\Enterprise\Support\CronStatus;
 
@@ -56,6 +57,7 @@ class Bootstrap {
 
     private function register_admin() : void {
         ( new Dashboard() )->hooks();
+        ( new System_Status_Page() )->hooks();
     }
 
     private function register_events() : void {
