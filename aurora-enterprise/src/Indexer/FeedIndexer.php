@@ -10,6 +10,10 @@ use function wp_json_encode;
 use function wp_generate_uuid4;
 use function file_exists;
 use function file_put_contents;
+use function fseek;
+use function ftell;
+use function ftruncate;
+use function fflush;
 use Aurora\Enterprise\Support\Logger;
 use wpdb;
 
@@ -55,7 +59,7 @@ class FeedIndexer extends AbstractIndexer {
         $statePath = $dir . $feedId . '.state.json';
         $state = $this->loadState( $statePath );
 
-        $handle = fopen( $tmpPath, 'a' );
+        $handle = fopen( $tmpPath, 'c+' );
         if ( ! $handle ) {
             throw new \RuntimeException( sprintf( 'Unable to open feed file %s for writing.', $tmpPath ) );
         }
@@ -63,6 +67,8 @@ class FeedIndexer extends AbstractIndexer {
             fclose( $handle );
             throw new \RuntimeException( 'Unable to lock feed file.' );
         }
+        fseek( $handle, 0, SEEK_END );
+        $state = $this->recoverPartialChunks( $handle, $state, $statePath );
         foreach ( $jobs as $job ) {
             $chunk    = (int) ( $job['chunk'] ?? 1 );
             $total    = (int) ( $job['total_chunks'] ?? 1 );
@@ -75,16 +81,35 @@ class FeedIndexer extends AbstractIndexer {
             if ( isset( $state['received'][ $chunk ] ) ) {
                 continue;
             }
+            $startOffset = ftell( $handle );
+            if ( false === $startOffset ) {
+                fclose( $handle );
+                throw new \RuntimeException( 'Unable to determine feed file offset.' );
+            }
+            if ( ! isset( $state['in_progress'] ) || ! is_array( $state['in_progress'] ) ) {
+                $state['in_progress'] = [];
+            }
+            $state['in_progress'][ $chunk ] = $startOffset;
+            $this->persistState( $statePath, $state );
             $productIds = array_map( 'intval', (array) ( $job['product_ids'] ?? [] ) );
+            $written    = 0;
             foreach ( $productIds as $productId ) {
                 $row = $this->buildSnapshotRow( $productId, $version );
                 if ( empty( $row ) ) {
                     continue;
                 }
                 fwrite( $handle, wp_json_encode( $row ) . "\n" );
+                $written++;
             }
+            if ( isset( $state['in_progress'][ $chunk ] ) ) {
+                unset( $state['in_progress'][ $chunk ] );
+            }
+            if ( ! isset( $state['row_count'] ) ) {
+                $state['row_count'] = 0;
+            }
+            $state['row_count'] += $written;
             $state['received'][ $chunk ] = true;
-            file_put_contents( $statePath, wp_json_encode( $state ) );
+            $this->persistState( $statePath, $state );
         }
         flock( $handle, LOCK_UN );
         fclose( $handle );
@@ -99,16 +124,50 @@ class FeedIndexer extends AbstractIndexer {
             rename( $tmpPath, $finalPath );
             unlink( $statePath );
             $this->logger->info( 'feed', 'Feed file completed', [ 'feed_id' => $feedId, 'path' => $finalPath ] );
+            $this->persistMetadata( $finalPath, $state );
         }
+    }
+
+    private function persistMetadata( string $finalPath, array $state ) : void {
+        $rows = (int) ( $state['row_count'] ?? 0 );
+        \Aurora\Enterprise\Ops\Feed_Metadata_Store::update( [
+            'file_name'        => basename( $finalPath ),
+            'rows'             => $rows,
+            'snapshot_version' => (int) ( $state['snapshot_version'] ?? 0 ),
+            'generated_at_utc' => gmdate( 'Y-m-d H:i:s' ),
+            'size_bytes'       => (int) filesize( $finalPath ),
+        ] );
+    }
+
+    private function recoverPartialChunks( $handle, array $state, string $statePath ) : array {
+        if ( empty( $state['in_progress'] ) || ! is_array( $state['in_progress'] ) ) {
+            return $state;
+        }
+        $offsets = array_filter( $state['in_progress'], static function ( $value ) {
+            return is_numeric( $value );
+        } );
+        if ( ! empty( $offsets ) ) {
+            $target = min( array_map( 'intval', $offsets ) );
+            ftruncate( $handle, $target );
+            fflush( $handle );
+        }
+        fseek( $handle, 0, SEEK_END );
+        $state['in_progress'] = [];
+        $this->persistState( $statePath, $state );
+        return $state;
+    }
+
+    private function persistState( string $statePath, array $state ) : void {
+        file_put_contents( $statePath, wp_json_encode( $state ), LOCK_EX );
     }
 
     private function loadState( string $statePath ) : array {
         if ( ! file_exists( $statePath ) ) {
-            return [ 'total_chunks' => 0, 'snapshot_version' => 0, 'received' => [] ];
+            return [ 'total_chunks' => 0, 'snapshot_version' => 0, 'received' => [], 'row_count' => 0, 'in_progress' => [] ];
         }
         $decoded = json_decode( file_get_contents( $statePath ), true );
         if ( ! is_array( $decoded ) ) {
-            return [ 'total_chunks' => 0, 'snapshot_version' => 0, 'received' => [] ];
+            return [ 'total_chunks' => 0, 'snapshot_version' => 0, 'received' => [], 'row_count' => 0, 'in_progress' => [] ];
         }
         if ( ! isset( $decoded['received'] ) || ! is_array( $decoded['received'] ) ) {
             $decoded['received'] = [];
@@ -125,6 +184,12 @@ class FeedIndexer extends AbstractIndexer {
         }
         if ( $state['total_chunks'] !== $total || $state['snapshot_version'] !== $version ) {
             throw new \RuntimeException( 'Feed manifest mismatch detected.' );
+        }
+        if ( ! isset( $state['row_count'] ) ) {
+            $state['row_count'] = 0;
+        }
+        if ( ! isset( $state['in_progress'] ) || ! is_array( $state['in_progress'] ) ) {
+            $state['in_progress'] = [];
         }
         return $state;
     }
