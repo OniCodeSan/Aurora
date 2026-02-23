@@ -24,6 +24,7 @@ use Aurora\Enterprise\Http\Controllers\Dashboard_Controller;
 use Aurora\Enterprise\Http\Controllers\Queue_Controller;
 use Aurora\Enterprise\Http\Controllers\Metrics_Controller;
 use Aurora\Enterprise\Ops\Rest\Ops_Controller;
+use Aurora\Enterprise\Ops\Ops_Dispatcher;
 use Aurora\Enterprise\Admin\System_Status_Page;
 use Aurora\Enterprise\Support\Config;
 use Aurora\Enterprise\Support\CronStatus;
@@ -37,6 +38,7 @@ class Bootstrap {
         $this->register_rest();
         $this->register_cli_commands();
         $this->register_queue_sweeper_cron();
+        ( new Ops_Dispatcher() )->hooks();
         add_action( 'aurora_rebuild_async', [ $this, 'handle_async_rebuild' ], 10, 1 );
     }
 

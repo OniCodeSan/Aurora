@@ -1,9 +1,16 @@
 <?php
 namespace Aurora\Enterprise\Ops;
 
+use Aurora\Enterprise\Ops\Ops_Run_Manager;
+
 class System_Status_Provider {
+    private Ops_Run_Manager $runs;
     private const CACHE_KEY = 'aurora_system_status';
     private const CACHE_TTL = 30;
+
+    public function __construct() {
+        $this->runs = Ops_Run_Manager::instance();
+    }
 
     public function get_status() : array {
         $cached = get_transient( self::CACHE_KEY );
@@ -39,7 +46,7 @@ class System_Status_Provider {
                 'last_file' => null,
                 'queue'     => 0,
             ],
-            'last_runs' => [],
+            'last_runs' => $this->runs->recent_runs(),
         ];
         set_transient( self::CACHE_KEY, $data, self::CACHE_TTL );
         return $data;

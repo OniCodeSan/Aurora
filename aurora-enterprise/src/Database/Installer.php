@@ -230,6 +230,7 @@ class Installer {
 
         $schema[] = "CREATE TABLE {$prefix}aurora_ops_runs (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            op_key VARCHAR(100) NOT NULL,
             action_type VARCHAR(50) NOT NULL,
             indexer VARCHAR(20) NULL,
             status VARCHAR(20) NOT NULL DEFAULT 'requested',
@@ -243,7 +244,8 @@ class Installer {
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (id),
             KEY status_requested (status, requested_at),
-            KEY action_created (action_type, created_at)
+            KEY action_created (action_type, created_at),
+            KEY op_key_created (op_key, created_at)
         ) {$charset};";
 
         foreach ( $schema as $sql ) {
