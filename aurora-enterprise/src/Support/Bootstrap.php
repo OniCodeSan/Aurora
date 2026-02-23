@@ -15,6 +15,7 @@ use Aurora\Enterprise\CLI\Queue_Retry_Command;
 use Aurora\Enterprise\CLI\Test_Command;
 use Aurora\Enterprise\CLI\Queue_Backfill_Shards_Command;
 use Aurora\Enterprise\CLI\Upgrade_Command;
+use Aurora\Enterprise\CLI\Product_Seed_Command;
 use Aurora\Enterprise\Events\Product_Event_Subscriber;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Queue\DatabaseQueue;
@@ -22,6 +23,7 @@ use Aurora\Enterprise\Queue\RedisQueue;
 use Aurora\Enterprise\Http\Controllers\Dashboard_Controller;
 use Aurora\Enterprise\Http\Controllers\Queue_Controller;
 use Aurora\Enterprise\Http\Controllers\Metrics_Controller;
+use Aurora\Enterprise\Ops\Rest\Ops_Controller;
 use Aurora\Enterprise\Support\Config;
 use Aurora\Enterprise\Support\CronStatus;
 
@@ -66,6 +68,7 @@ class Bootstrap {
             ( new \Aurora\Enterprise\Http\Controllers\Cron_Controller() )->register_routes();
             ( new Queue_Controller() )->register_routes();
             ( new Metrics_Controller() )->register_routes();
+            ( new Ops_Controller() )->register_routes();
         } );
     }
 
@@ -78,6 +81,7 @@ class Bootstrap {
             \WP_CLI::add_command( 'aurora queue sweep-leases', new Queue_Sweep_Command() );
             \WP_CLI::add_command( 'aurora queue retry-dead', new Queue_Retry_Command() );
             \WP_CLI::add_command( 'aurora queue backfill-shards', new Queue_Backfill_Shards_Command() );
+            \WP_CLI::add_command( 'aurora seed products', new Product_Seed_Command() );
             \WP_CLI::add_command( 'aurora test', new Test_Command() );
             $migrateCommand = new Migrate_Command();
             \WP_CLI::add_command( 'aurora migrate', $migrateCommand );
