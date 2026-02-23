@@ -228,6 +228,24 @@ class Installer {
             KEY idx_expires (expires_at)
         ) {$charset};";
 
+        $schema[] = "CREATE TABLE {$prefix}aurora_ops_runs (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            action_type VARCHAR(50) NOT NULL,
+            indexer VARCHAR(20) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'requested',
+            requested_at DATETIME NOT NULL,
+            started_at DATETIME NULL,
+            finished_at DATETIME NULL,
+            message VARCHAR(255) NULL,
+            error TEXT NULL,
+            meta_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY status_requested (status, requested_at),
+            KEY action_created (action_type, created_at)
+        ) {$charset};";
+
         foreach ( $schema as $sql ) {
             dbDelta( $sql );
         }
