@@ -18,6 +18,15 @@
 
   const esc = (v) => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+  const formatBytes = (bytes) => {
+    const b = Number(bytes);
+    if (!Number.isFinite(b) || b <= 0) return '-';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const idx = Math.min(Math.floor(Math.log(b) / Math.log(1024)), units.length - 1);
+    const val = b / (1024 ** idx);
+    return `${val.toFixed(val >= 10 ? 0 : 1)} ${units[idx]}`;
+  };
+
   const badge = (status) => {
     const cls = status === 'ERROR' ? 'aurora-badge error' : status === 'WARNING' ? 'aurora-badge warn' : 'aurora-badge ok';
     return `<span class="${cls}">${esc(status || 'UNKNOWN')}</span>`;
@@ -48,18 +57,24 @@
   const queueCard = () => {
     const q = state.queues || {};
     const channels = ['price','stock','visibility','feed','dead'];
+    const total = channels.reduce((sum, ch) => sum + Number(q[ch] ?? 0), 0);
     const rows = channels.map((ch) => {
-      const v = q[ch] ?? 0;
-      const warn = (ch === 'dead' && v > 0) || (ch !== 'dead' && v > 10000);
-      return `<tr class="${warn ? 'aurora-row-warn' : ''}"><td>${ch}</td><td>${v}</td></tr>`;
+      const v = Number(q[ch] ?? 0);
+      const isDead = ch === 'dead';
+      const critical = (isDead && v > 0) || (!isDead && v > 50000);
+      const warn = !critical && ((isDead && v === 0 && false) || (!isDead && v > 10000));
+      const status = critical ? 'CRITICAL' : warn ? 'HIGH' : 'OK';
+      const rowCls = critical ? 'aurora-row-critical' : warn ? 'aurora-row-warn' : '';
+      return `<tr class="${rowCls}"><td>${ch}</td><td>${v}</td><td>${badge(status)}</td></tr>`;
     }).join('');
     return `
       <div class="aurora-card">
         <div class="aurora-card-h"><div class="aurora-card-title">Queues</div></div>
         <table class="aurora-table">
-          <thead><tr><th>Channel</th><th>Pending/Dead</th></tr></thead>
+          <thead><tr><th>Channel</th><th>Pending/Dead</th><th>Status</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
+        <div class="aurora-muted">Total backlog: ${total}</div>
         <div class="aurora-actions">
           <button class="button button-primary" data-op="sweep_leases">Sweep leases</button>
         </div>
@@ -69,7 +84,7 @@
 
   const snapshotCard = () => {
     const snap = state.snapshots || {};
-    const versions = snap.versions || {};
+    const versions = snap.versions || snap.current_versions || {};
     const coverage = snap.coverage || {};
     const rows = Object.keys(versions).map((ch) => {
       const cov = coverage[ch] || {};
@@ -85,6 +100,7 @@
           <thead><tr><th>Channel</th><th>Version</th><th>Distinct</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
+        <div class="aurora-muted">Aligned: ${snap.aligned ? 'YES' : 'NO'}</div>
         <div class="aurora-actions">
           <button class="button" data-op="rebuild" data-indexer="all">Rebuild all</button>
           <button class="button" data-op="rebuild" data-indexer="price">Rebuild price</button>
@@ -97,16 +113,20 @@
 
   const feedCard = () => {
     const feed = state.feed || {};
-    return `
-      <div class="aurora-card">
-        <div class="aurora-card-h"><div class="aurora-card-title">Last feed</div></div>
+    const hasFeed = Object.keys(feed).length > 0;
+    const body = hasFeed ? `
         <div class="aurora-kv">
           <div><strong>File:</strong> ${esc(feed.file_name || feed.file || '-')}</div>
           <div><strong>Rows:</strong> ${esc(feed.rows ?? '-')}</div>
           <div><strong>Snapshot v:</strong> ${esc(feed.snapshot_version ?? '-')}</div>
           <div><strong>UTC:</strong> ${esc(feed.generated_at_utc ?? '-')}</div>
-          <div><strong>Size:</strong> ${esc(feed.size_bytes ?? '-')}</div>
-        </div>
+          <div><strong>Size:</strong> ${esc(formatBytes(feed.size_bytes))}</div>
+        </div>`
+      : '<div class="aurora-muted">No feed generated yet.</div>';
+    return `
+      <div class="aurora-card">
+        <div class="aurora-card-h"><div class="aurora-card-title">Last feed</div></div>
+        ${body}
         <div class="aurora-actions">
           <button class="button" data-op="feed_enqueue">Enqueue feed</button>
           <button class="button button-primary" data-op="feed_run">Run feed</button>
@@ -119,12 +139,12 @@
     const h = state.health || { status: 'UNKNOWN', reasons: [] };
     const reasons = Array.isArray(h.reasons) && h.reasons.length
       ? `<ul class="aurora-reasons">${h.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
-      : '<div class="aurora-muted">Nessun warning.</div>';
+      : '<div class="aurora-muted">System operating normally.</div>';
     return `
       <div class="aurora-card">
         <div class="aurora-card-h">
           <div class="aurora-card-title">Health</div>
-          ${badge(h.status)}
+          <div class="aurora-badge-large">${badge(h.status)}</div>
         </div>
         ${reasons}
         <div class="aurora-muted">Aggiornato: ${esc(state.generated_at_utc || '-')}</div>
@@ -161,14 +181,21 @@
         if (op === 'rebuild' && indexer) payload.indexer = indexer;
         if (op === 'feed_run') { payload.batch = 25; payload.max_loops = 2000; }
         if (op === 'feed_enqueue') { payload.chunk_size = 1000; }
+        const originalLabel = btn.textContent;
         btn.disabled = true;
+        btn.textContent = 'Running…';
         try {
           await trigger(op, payload);
           await refresh();
         } catch (err) {
-          alert(err.message || String(err));
+          if (err?.status === 409) {
+            alert('Already scheduled');
+          } else {
+            alert(err.message || String(err));
+          }
         } finally {
           btn.disabled = false;
+          btn.textContent = originalLabel;
         }
       });
     });
@@ -190,7 +217,9 @@
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(json?.message || `Trigger failed: ${res.status}`);
+      const err = new Error(json?.message || `Trigger failed: ${res.status}`);
+      err.status = res.status;
+      throw err;
     }
     return json;
   };
