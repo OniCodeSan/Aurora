@@ -8,10 +8,20 @@ class Dashboard {
     }
 
     public function register_menu() : void {
+        add_menu_page(
+            __( 'Aurora', 'aurora-enterprise' ),
+            __( 'Aurora', 'aurora-enterprise' ),
+            'manage_woocommerce',
+            'aurora-project',
+            [ $this, 'render_page' ],
+            'dashicons-admin-generic',
+            56
+        );
+
         add_submenu_page(
             'aurora-project',
             __( 'Aurora Enterprise Indexer', 'aurora-enterprise' ),
-            __( 'Aurora Indexer', 'aurora-enterprise' ),
+            __( 'Indexer', 'aurora-enterprise' ),
             'manage_woocommerce',
             'aurora-enterprise-indexer',
             [ $this, 'render_page' ]
