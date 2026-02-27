@@ -6,7 +6,7 @@ use Aurora\Enterprise\Ops\Ops_Run_Manager;
 class System_Status_Provider {
     private Ops_Run_Manager $runs;
     private const CACHE_KEY = 'aurora_system_status';
-    private const CACHE_TTL = 30;
+    private const CACHE_TTL = 5;
 
     public function __construct() {
         $this->runs = Ops_Run_Manager::instance();

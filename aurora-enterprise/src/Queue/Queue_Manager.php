@@ -71,4 +71,39 @@ class Queue_Manager implements QueueInterface {
     public function retryDead( ?string $queue = null, int $limit = 100 ) : int {
         return $this->driver->retryDead( $queue, $limit );
     }
+
+    /**
+     * Sweep expired leases across queue shards.
+     *
+     * @return array<string,mixed>
+     */
+    public function sweep_leases( ?string $channel = null, ?int $olderThanSeconds = null, ?int $shard = null, ?int $totalShards = null ) : array {
+        $driver = $this->driver();
+        if ( ! $driver instanceof DatabaseQueue ) {
+            return [
+                'requeued' => 0,
+                'dead'     => 0,
+                'message'  => 'Sweep skipped: driver is not database.',
+            ];
+        }
+
+        $ttl = null !== $olderThanSeconds ? max( 0, (int) $olderThanSeconds ) : Config::leaseTtlSeconds();
+        $total = null !== $totalShards ? max( 1, (int) $totalShards ) : Config::totalShards();
+        $targetShards = null === $shard ? range( 0, $total - 1 ) : [ max( 0, (int) $shard ) ];
+
+        $requeued = 0;
+        $dead     = 0;
+        foreach ( $targetShards as $targetShard ) {
+            $result = $driver->sweepExpiredLeases( $channel, $ttl, $targetShard );
+            $requeued += (int) ( $result['requeued'] ?? 0 );
+            $dead     += (int) ( $result['dead'] ?? 0 );
+        }
+
+        return [
+            'requeued' => $requeued,
+            'dead'     => $dead,
+            'ttl'      => $ttl,
+            'shards'   => $targetShards,
+        ];
+    }
 }

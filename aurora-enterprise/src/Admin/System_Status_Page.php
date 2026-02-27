@@ -38,8 +38,9 @@ class System_Status_Page {
         wp_enqueue_style( 'aurora-system-status', plugins_url( 'assets/admin/css/system-status.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], AURORA_ENTERPRISE_VERSION );
         wp_enqueue_script( 'aurora-system-status', plugins_url( 'assets/admin/js/system-status.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [ 'wp-api-fetch' ], AURORA_ENTERPRISE_VERSION, true );
         wp_localize_script( 'aurora-system-status', 'auroraSystemStatus', [
-            'restUrl' => rest_url( 'aurora/v1/system-status' ),
-            'nonce'   => wp_create_nonce( 'wp_rest' ),
+            'restPath'         => '/aurora/v1/system-status',
+            'triggerSweepPath' => '/aurora/v1/trigger/sweep-leases',
+            'nonce'            => wp_create_nonce( 'wp_rest' ),
         ] );
     }
 }

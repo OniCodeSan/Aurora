@@ -41,6 +41,25 @@ class Ops_Controller {
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'trigger_sweep' ],
             'permission_callback' => [ $this, 'check_permissions' ],
+            'args'                => [
+                'channel' => [
+                    'type'     => 'string',
+                    'required' => false,
+                    'enum'     => [ 'price', 'stock', 'visibility', 'feed', 'all' ],
+                ],
+                'older_than' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                ],
+                'shard' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                ],
+                'total_shards' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                ],
+            ],
         ] );
 
         register_rest_route( 'aurora/v1', '/trigger/feed-enqueue', [
@@ -59,6 +78,26 @@ class Ops_Controller {
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'trigger_feed_run' ],
             'permission_callback' => [ $this, 'check_permissions' ],
+            'args'                => [
+                'batch' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                    'default'  => 100,
+                ],
+                'max_loops' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                    'default'  => 1,
+                ],
+                'shard' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                ],
+                'total_shards' => [
+                    'type'     => 'integer',
+                    'required' => false,
+                ],
+            ],
         ] );
     }
 
@@ -67,21 +106,47 @@ class Ops_Controller {
     }
 
     public function trigger_rebuild( WP_REST_Request $request ) {
-        $indexer = $request->get_param( 'indexer' );
-        return $this->respond( $this->runs->enqueue( 'rebuild', $indexer ) );
+        return $this->schedule(
+            'rebuild',
+            [
+                'indexer' => (string) $request->get_param( 'indexer' ),
+            ]
+        );
     }
 
-    public function trigger_sweep() {
-        return $this->respond( $this->runs->enqueue( 'sweep_leases' ) );
+    public function trigger_sweep( WP_REST_Request $request ) {
+        $payload = [];
+        foreach ( [ 'channel', 'older_than', 'shard', 'total_shards' ] as $key ) {
+            $value = $request->get_param( $key );
+            if ( null !== $value && '' !== $value ) {
+                $payload[ $key ] = $value;
+            }
+        }
+        return $this->schedule( 'sweep_leases', $payload );
     }
 
     public function trigger_feed_enqueue( WP_REST_Request $request ) {
         $chunk = (int) $request->get_param( 'chunk_size' );
-        return $this->respond( $this->runs->enqueue( 'feed_enqueue', null, [ 'chunk_size' => $chunk ?: 1000 ] ) );
+        return $this->schedule(
+            'feed_enqueue',
+            [
+                'chunk_size' => $chunk > 0 ? $chunk : 1000,
+            ]
+        );
     }
 
-    public function trigger_feed_run() {
-        return $this->respond( $this->runs->enqueue( 'feed_run' ) );
+    public function trigger_feed_run( WP_REST_Request $request ) {
+        $payload = [
+            'batch'     => (int) $request->get_param( 'batch' ),
+            'max_loops' => (int) $request->get_param( 'max_loops' ),
+        ];
+        foreach ( [ 'shard', 'total_shards' ] as $key ) {
+            $value = $request->get_param( $key );
+            if ( null !== $value && '' !== $value ) {
+                $payload[ $key ] = $value;
+            }
+        }
+        return $this->schedule( 'feed_run', $payload );
     }
 
     private function respond( $result ) {
@@ -89,6 +154,48 @@ class Ops_Controller {
             return $result;
         }
         return new WP_REST_Response( $result );
+    }
+
+    private function schedule( string $op_key, array $payload = [] ) {
+        $validation = $this->validate_trigger( $op_key, $payload );
+        if ( is_wp_error( $validation ) ) {
+            return $validation;
+        }
+
+        $indexer = isset( $payload['indexer'] ) ? (string) $payload['indexer'] : null;
+        $result  = $this->runs->enqueue( $op_key, $indexer, $payload );
+        return $this->respond( $result );
+    }
+
+    private function validate_trigger( string $op_key, array $payload ) {
+        $allowed = [ 'rebuild', 'sweep_leases', 'feed_enqueue', 'feed_run' ];
+        if ( ! in_array( $op_key, $allowed, true ) ) {
+            return new WP_Error( 'aurora_ops_invalid_op', 'Invalid operation key.', [ 'status' => 400 ] );
+        }
+
+        if ( 'rebuild' === $op_key ) {
+            $indexer = (string) ( $payload['indexer'] ?? '' );
+            if ( ! in_array( $indexer, [ 'price', 'stock', 'visibility', 'all' ], true ) ) {
+                return new WP_Error( 'aurora_ops_invalid_indexer', 'Invalid rebuild indexer.', [ 'status' => 400 ] );
+            }
+        }
+
+        if ( 'feed_enqueue' === $op_key ) {
+            $chunk = (int) ( $payload['chunk_size'] ?? 0 );
+            if ( $chunk <= 0 ) {
+                return new WP_Error( 'aurora_ops_invalid_chunk', 'chunk_size must be > 0.', [ 'status' => 400 ] );
+            }
+        }
+
+        if ( 'feed_run' === $op_key ) {
+            $batch = (int) ( $payload['batch'] ?? 0 );
+            $loops = (int) ( $payload['max_loops'] ?? 0 );
+            if ( $batch <= 0 || $loops <= 0 ) {
+                return new WP_Error( 'aurora_ops_invalid_feed_run', 'batch and max_loops must be > 0.', [ 'status' => 400 ] );
+            }
+        }
+
+        return true;
     }
 
     public function check_permissions() : bool {
