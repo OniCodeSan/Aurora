@@ -1,7 +1,20 @@
-.aurora-system-status .aurora-card {
-    background: #fff;
-    border: 1px solid #ccd0d4;
-    border-radius: 4px;
-    padding: 16px;
-    margin-bottom: 16px;
-}
+#aurora-system-status-root { margin-top: 16px; }
+.aurora-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.aurora-card { background: #fff; border: 1px solid #dcdcde; border-radius: 8px; padding: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+.aurora-card-h { display:flex; align-items:center; justify-content:space-between; margin-bottom: 8px; }
+.aurora-card-title { font-size: 14px; font-weight: 600; }
+.aurora-muted { color:#646970; font-size: 12px; margin-top: 6px; }
+.aurora-actions { display:flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.aurora-table { width: 100%; border-collapse: collapse; }
+.aurora-table th, .aurora-table td { padding: 6px 8px; border-top: 1px solid #f0f0f1; font-size: 12px; text-align: left; }
+.aurora-row-warn td { background: #fff8e5; }
+.aurora-badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid transparent; }
+.aurora-badge.ok { background: #edfaef; border-color: #b7e2c1; }
+.aurora-badge.warn { background: #fff8e5; border-color: #f0d36b; }
+.aurora-badge.error { background: #fde8e8; border-color: #f1aeb5; }
+.aurora-reasons { margin: 0; padding-left: 16px; }
+.aurora-kv div { margin: 4px 0; font-size: 12px; }
+.aurora-run-table { margin-top: 16px; }
+.aurora-notice { padding: 8px 10px; border:1px solid #dcdcde; border-radius:6px; background:#fff; }
+.aurora-notice.error { border-color:#e26f6f; background:#fde8e8; color:#7c1f1f; }
+.aurora-notice.warn { border-color:#f0d36b; background:#fff8e5; color:#8a6d1f; }

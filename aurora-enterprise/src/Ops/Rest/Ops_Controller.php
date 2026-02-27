@@ -24,6 +24,12 @@ class Ops_Controller {
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
 
+        register_rest_route( 'aurora/v1', '/trigger', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'trigger' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
         register_rest_route( 'aurora/v1', '/trigger/rebuild', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'trigger_rebuild' ],
@@ -208,5 +214,24 @@ class Ops_Controller {
             return wp_verify_nonce( $nonce, 'wp_rest' ) > 0;
         }
         return true;
+    }
+
+    public function trigger( WP_REST_Request $request ) {
+        $params  = $request->get_json_params() ?: [];
+        $opKey   = isset( $params['op_key'] ) ? sanitize_text_field( $params['op_key'] ) : '';
+        $payload = isset( $params['payload'] ) && is_array( $params['payload'] ) ? $params['payload'] : [];
+
+        if ( '' === $opKey ) {
+            return new WP_Error( 'aurora_ops_invalid_op', 'Missing op_key.', [ 'status' => 400 ] );
+        }
+
+        $validation = $this->validate_trigger( $opKey, $payload );
+        if ( is_wp_error( $validation ) ) {
+            return $validation;
+        }
+
+        $indexer = isset( $payload['indexer'] ) ? (string) $payload['indexer'] : null;
+        $result  = $this->runs->enqueue( $opKey, $indexer, $payload );
+        return $this->respond( $result );
     }
 }
