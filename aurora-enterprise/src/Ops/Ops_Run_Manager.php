@@ -40,6 +40,9 @@ class Ops_Run_Manager {
             ],
         ];
         if ( function_exists( 'as_enqueue_async_action' ) ) {
+            if ( function_exists( 'as_has_scheduled_action' ) && as_has_scheduled_action( 'aurora_ops_dispatch', $args, 'aurora' ) ) {
+                return new WP_Error( 'aurora_ops_duplicate_action', 'Action already scheduled for this run_id.', [ 'status' => 409 ] );
+            }
             $actionId = (int) as_enqueue_async_action( 'aurora_ops_dispatch', $args, 'aurora' );
             if ( $actionId <= 0 ) {
                 $this->mark_error( $runId, 'Unable to schedule async action.' );
@@ -64,10 +67,8 @@ class Ops_Run_Manager {
         $now   = current_time( 'mysql', true );
         $updated = $wpdb->query(
             $wpdb->prepare(
-                "UPDATE {$table} SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s WHERE id = %d AND status = 'requested'",
-                $now,
-                $now,
-                $runId
+                "UPDATE {$table} SET status = 'running', started_at = %s, updated_at = %s WHERE id = %d AND status = 'requested'",
+                $now, $now, $runId
             )
         );
         $this->invalidate_status_cache();
