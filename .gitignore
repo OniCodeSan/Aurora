@@ -1,8 +1,5 @@
-# Global ignores
-.DS_Store
-.vscode/
-
-# Dev artifacts
-wordpress/tmp/
+scripts/
+wordpress/seed-products.php
+wordpress/seed-products-direct.php
 retro-dosbox/retroarch/config/.cache/
 retro-dosbox/retroarch/config/.dbus/
