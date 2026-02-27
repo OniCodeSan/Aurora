@@ -86,9 +86,10 @@ class System_Status_Provider {
         }
 
         return [
-            'versions' => $versions,
-            'aligned'  => $aligned,
-            'coverage' => $coverage,
+            'versions'         => $versions,
+            'current_versions' => $versions,
+            'aligned'          => $aligned,
+            'coverage'         => $coverage,
         ];
     }
 
