@@ -93,8 +93,7 @@ class Feed_Command extends WP_CLI_Command {
             WP_CLI::warning( sprintf( 'Only %d products available; using all.', count( $ids ) ) );
         }
 
-        $run    = Ops_Run_Manager::instance();
-        $run_id = $run->enqueue( 'feed_run', null, [] )['run_id'] ?? 0;
+        $run_id = $this->create_feed_run_row();
         if ( $run_id <= 0 ) {
             WP_CLI::error( 'Unable to create ops run.' );
         }
@@ -166,8 +165,7 @@ class Feed_Command extends WP_CLI_Command {
             WP_CLI::warning( sprintf( 'Only %d products available; using all.', count( $ids ) ) );
         }
 
-        $run    = Ops_Run_Manager::instance();
-        $run_id = $run->create_run( 'feed_run', 'feed_run', null, [] );
+        $run_id = $this->create_feed_run_row();
         if ( $run_id <= 0 ) {
             WP_CLI::error( 'Unable to create ops run.' );
         }
@@ -225,5 +223,30 @@ class Feed_Command extends WP_CLI_Command {
 
         WP_CLI::success( sprintf( 'Feed stress run_id=%d status=%s rows=%d bytes=%d parts=%d rps=%.2f report=%s',
             $run_id, $report['status'], $rows, $bytes, $parts, $rps, $reportPath ) );
+    }
+
+    private function create_feed_run_row() : int {
+        global $wpdb;
+        $table = $wpdb->prefix . 'aurora_ops_runs';
+        $now   = current_time( 'mysql', true );
+        $inserted = $wpdb->insert(
+            $table,
+            [
+                'op_key'       => 'feed_run',
+                'action_type'  => 'feed_run',
+                'indexer'      => null,
+                'status'       => 'requested',
+                'requested_at' => $now,
+                'started_at'   => null,
+                'finished_at'  => null,
+                'message'      => null,
+                'error'        => null,
+                'meta_json'    => null,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
+            [ '%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s' ]
+        );
+        return $inserted ? (int) $wpdb->insert_id : 0;
     }
 }
