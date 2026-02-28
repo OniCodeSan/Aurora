@@ -103,9 +103,11 @@ class Feed_Command extends WP_CLI_Command {
         $validator = new FeedValidator();
         $manager = new FeedRunManager( $lock, $chunk, $validator );
 
-        $attempts = 0;
         $result = [];
-        while ( $attempts < 3 ) {
+        $attempts = 0;
+        $maxAttempts = 200;
+        $deadline = time() + 1800; // 30 min wall time
+        while ( $attempts < $maxAttempts && time() < $deadline ) {
             $attempts++;
             $result = $manager->start( $run_id );
             $status = $result['status'] ?? '';
@@ -115,6 +117,7 @@ class Feed_Command extends WP_CLI_Command {
             if ( 'partial' !== $status ) {
                 break;
             }
+            WP_CLI::log( sprintf( 'partial retry %d status=%s', $attempts, $status ) );
             sleep( 2 );
         }
 

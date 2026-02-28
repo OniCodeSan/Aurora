@@ -162,6 +162,13 @@ class Ops_Controller {
     }
 
     public function feed_run( WP_REST_Request $request ) {
+        global $wpdb;
+        $existing = $wpdb->get_var(
+            "SELECT id FROM {$wpdb->prefix}aurora_ops_runs WHERE op_key='feed_run' AND status IN ('requested','running','partial') ORDER BY id DESC LIMIT 1"
+        );
+        if ( $existing ) {
+            return new WP_Error( 'aurora_ops_feed_busy', 'Feed run already in progress', [ 'status' => 409, 'run_id' => (int) $existing ] );
+        }
         $run    = Ops_Run_Manager::instance();
         $run_id = $run->create_run( 'feed_run', 'feed_run', null, [] );
         if ( $run_id <= 0 ) {
