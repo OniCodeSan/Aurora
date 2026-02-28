@@ -24,9 +24,15 @@ spl_autoload_register( static function ( string $class ) : void {
     }
     $relative = substr( $class, strlen( $prefix ) );
     $relative = str_replace( '\\', '/', $relative );
-    $file     = AURORA_ENTERPRISE_PLUGIN_DIR . 'src/' . $relative . '.php';
-    if ( file_exists( $file ) ) {
-        require_once $file;
+    $candidates = [
+        AURORA_ENTERPRISE_PLUGIN_DIR . 'src/' . $relative . '.php',
+        AURORA_ENTERPRISE_PLUGIN_DIR . 'includes/' . $relative . '.php',
+    ];
+    foreach ( $candidates as $file ) {
+        if ( file_exists( $file ) ) {
+            require_once $file;
+            return;
+        }
     }
 } );
 
