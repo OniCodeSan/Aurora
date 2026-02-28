@@ -94,7 +94,7 @@ class Feed_Command extends WP_CLI_Command {
         }
 
         $run    = Ops_Run_Manager::instance();
-        $run_id = $run->create_run( 'feed_run', 'feed_run', null, [] );
+        $run_id = $run->enqueue( 'feed_run', null, [] )['run_id'] ?? 0;
         if ( $run_id <= 0 ) {
             WP_CLI::error( 'Unable to create ops run.' );
         }
