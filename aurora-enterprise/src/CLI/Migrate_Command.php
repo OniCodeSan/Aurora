@@ -154,6 +154,22 @@ class SnapshotV2Migrator {
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY (stat_key)
             ) {$this->db->get_charset_collate()};",
+            'aurora_feed_progress' => "CREATE TABLE {$this->prefix}aurora_feed_progress (
+                run_id BIGINT UNSIGNED NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                owner CHAR(36) NULL,
+                snapshot_version BIGINT UNSIGNED NULL,
+                file_part INT UNSIGNED NOT NULL DEFAULT 1,
+                rows_written BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                bytes_written BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                last_product_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                started_at DATETIME NULL,
+                updated_at DATETIME NULL,
+                error TEXT NULL,
+                PRIMARY KEY (run_id),
+                KEY status_updated (status, updated_at),
+                KEY last_product (last_product_id)
+            ) {$this->db->get_charset_collate()};",
             'aurora_queue_checkpoints' => "CREATE TABLE {$this->prefix}aurora_queue_checkpoints (
                 channel VARCHAR(32) NOT NULL,
                 shard TINYINT UNSIGNED NOT NULL,
