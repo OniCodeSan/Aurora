@@ -60,6 +60,8 @@ class FeedRunManager {
         $started = microtime(true);
         $lastRefresh = time();
 
+        $runStart = microtime(true);
+
         try {
             while (true) {
                 if ($this->timedOut($started) || $this->memoryExceeded()) {
@@ -70,20 +72,10 @@ class FeedRunManager {
 
                 $chunk = $this->chunkProcessor->fetchChunk($snapshotVersion, $lastId, $this->chunkProcessor->getBatchSize());
                 if (empty($chunk['rows'])) {
-                    $writer->finalizeCurrentPart();
-                    $this->runs->mark_success($runId, [
-                        'message' => 'feed completed',
-                        'rows' => $rowsWritten,
-                        'bytes' => $bytesWritten,
-                    ]);
-                    $this->persistProgress($runId, [
-                        'status' => 'completed',
-                        'rows_written' => $rowsWritten,
-                        'bytes_written' => $bytesWritten,
-                        'last_product_id' => $lastId,
-                        'updated_at' => current_time('mysql', true),
-                    ]);
-                    return ['run_id' => $runId, 'status' => 'completed', 'rows' => $rowsWritten];
+                    $finalPath = $writer->finalizeCurrentPart();
+                    $files = $this->listParts($runId, $part, $finalPath);
+                    $meta = $this->finalizeMeta($runId, $snapshotVersion, $rowsWritten, $bytesWritten, $files, $runStart);
+                    return ['run_id' => $runId, 'status' => 'completed', 'rows' => $rowsWritten, 'files' => $files];
                 }
 
                 foreach ($chunk['rows'] as $row) {
@@ -127,6 +119,52 @@ class FeedRunManager {
             $this->lockManager->release($owner);
             $writer->close();
         }
+    }
+
+    private function finalizeMeta(int $runId, int $snapshotVersion, int $rows, int $bytes, array $files, float $runStart): array {
+        $duration = microtime(true) - $runStart;
+        $parts = count($files);
+        $expected = $this->validator->expectedCount($snapshotVersion);
+        $result = $this->validator->validate($expected, $rows);
+        $this->validator->logResult($result['ok'] ? 'info' : 'error', $runId, $snapshotVersion, $result, $files, $bytes);
+
+        $this->runs->mark_success($runId, [
+            'message' => 'feed completed',
+            'rows' => $rows,
+            'bytes' => $bytes,
+            'parts' => $parts,
+            'duration' => $duration,
+        ]);
+
+        update_option('aurora_last_feed_meta', wp_json_encode([
+            'run_id' => $runId,
+            'files' => $files,
+            'parts' => $parts,
+            'rows' => $rows,
+            'bytes_total' => $bytes,
+            'snapshot_version' => $snapshotVersion,
+            'generated_at_utc' => gmdate('Y-m-d H:i:s'),
+        ]), false);
+
+        $this->persistProgress($runId, [
+            'status' => 'completed',
+            'rows_written' => $rows,
+            'bytes_written' => $bytes,
+            'last_product_id' => $result['ok'] ? $runId : $runId, // conservative placeholder
+            'updated_at' => current_time('mysql', true),
+        ]);
+
+        $this->logInfo('completed', [
+            'run_id' => $runId,
+            'rows' => $rows,
+            'bytes' => $bytes,
+            'parts' => $parts,
+            'expected' => $expected,
+            'ratio' => $result['ratio'],
+            'duration' => $duration,
+        ]);
+
+        return $result;
     }
 
     private function detectSnapshotVersion(): int {
@@ -225,6 +263,13 @@ class FeedRunManager {
             'last_product_id' => $lastId,
             'updated_at' => current_time('mysql', true),
         ]);
+        $this->logInfo('partial', [
+            'run_id' => $runId,
+            'rows' => $rows,
+            'bytes' => $bytes,
+            'last_product_id' => $lastId,
+            'part' => $part,
+        ]);
     }
 
     private function scheduleResume(int $runId): void {
@@ -236,5 +281,36 @@ class FeedRunManager {
             return;
         }
         as_enqueue_async_action('aurora_ops_dispatch', $args, 'aurora');
+    }
+
+    private function listParts(int $runId, int $lastPart, string $lastFinal): array {
+        $dir = dirname($lastFinal) . '/';
+        $files = [];
+        for ($p = 1; $p <= $lastPart; $p++) {
+            $candidate = $dir . sprintf('feed_run_%dpart%d.jsonl', $runId, $p);
+            if (file_exists($candidate)) {
+                $files[] = $candidate;
+            }
+        }
+        return $files;
+    }
+
+    private function logInfo(string $event, array $context): void {
+        $path = $this->logPath('feed.log');
+        $line = sprintf('%s [%s] %s', gmdate('c'), $event, wp_json_encode($context));
+        file_put_contents($path, $line . "\n", FILE_APPEND);
+    }
+
+    private function logError(string $event, array $context): void {
+        $path = $this->logPath('feed-error.log');
+        $line = sprintf('%s [%s] %s', gmdate('c'), $event, wp_json_encode($context));
+        file_put_contents($path, $line . "\n", FILE_APPEND);
+    }
+
+    private function logPath(string $file): string {
+        $upload = wp_upload_dir();
+        $dir = trailingslashit($upload['basedir']) . 'aurora-feeds/';
+        wp_mkdir_p($dir);
+        return $dir . $file;
     }
 }
