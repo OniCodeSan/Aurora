@@ -9,6 +9,10 @@ use Aurora\Enterprise\Support\Config;
 use Aurora\Enterprise\Support\SnapshotVersionGuard;
 use Aurora\Enterprise\Support\SnapshotVersionManager;
 use Aurora\Enterprise\Worker\WorkerRunner;
+use Aurora\Enterprise\Feed\FeedLockManager;
+use Aurora\Enterprise\Feed\FeedChunkProcessor;
+use Aurora\Enterprise\Feed\FeedValidator;
+use Aurora\Enterprise\Feed\FeedRunManager;
 
 class Ops_Executor {
     /**
@@ -158,19 +162,19 @@ class Ops_Executor {
      * @return array<string,mixed>
      */
     private function execute_feed_run( array $payload ) : array {
-        $batch      = isset( $payload['batch'] ) ? max( 1, (int) $payload['batch'] ) : 100;
-        $maxLoops   = isset( $payload['max_loops'] ) ? max( 1, (int) $payload['max_loops'] ) : 1;
-        $totalShards = isset( $payload['total_shards'] ) ? max( 1, (int) $payload['total_shards'] ) : Config::totalShards();
-        $shard      = array_key_exists( 'shard', $payload ) ? (int) $payload['shard'] : null;
-
-        $runner    = new WorkerRunner( 'feed', $batch, $maxLoops, null, $shard, $totalShards, false );
-        $processed = $runner->run();
-
+        $runId = (int) ( $payload['run_id'] ?? 0 );
+        if ( $runId <= 0 ) {
+            throw new \RuntimeException( 'Missing run_id for feed_run' );
+        }
+        $manager = new FeedRunManager(
+            new FeedLockManager(),
+            new FeedChunkProcessor(),
+            new FeedValidator()
+        );
+        $result = $manager->start( $runId );
         return [
-            'message'   => sprintf( 'feed processed jobs=%d', $processed ),
-            'processed' => $processed,
-            'batch'     => $batch,
-            'max_loops' => $maxLoops,
+            'message' => $result['status'] ?? 'feed_run',
+            'run_id'  => $runId,
         ];
     }
 }

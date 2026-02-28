@@ -105,6 +105,12 @@ class Ops_Controller {
                 ],
             ],
         ] );
+
+        register_rest_route( 'aurora/v1', '/feed/run', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'feed_run' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
     }
 
     public function get_status() : WP_REST_Response {
@@ -153,6 +159,20 @@ class Ops_Controller {
             }
         }
         return $this->schedule( 'feed_run', $payload );
+    }
+
+    public function feed_run( WP_REST_Request $request ) {
+        $run    = Ops_Run_Manager::instance();
+        $run_id = $run->create_run( 'feed_run', 'feed_run', null, [] );
+        if ( $run_id <= 0 ) {
+            return new WP_Error( 'aurora_ops_run_create_failed', 'Unable to create ops run row.', [ 'status' => 500 ] );
+        }
+        $payload = [ 'run_id' => $run_id ];
+        $scheduled = $this->schedule( 'feed_run', $payload );
+        if ( is_wp_error( $scheduled ) ) {
+            return $scheduled;
+        }
+        return [ 'ok' => true, 'run_id' => $run_id, 'scheduled' => true ];
     }
 
     private function respond( $result ) {
