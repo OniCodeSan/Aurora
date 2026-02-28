@@ -22,8 +22,10 @@ class FeedJsonlWriter {
 
     public function __construct(int $runId, int $maxBytes = self::DEFAULT_MAX_BYTES, int $flushEvery = self::DEFAULT_FLUSH_EVERY) {
         $this->runId = $runId;
-        $this->maxBytes = $maxBytes;
-        $this->flushEvery = $flushEvery;
+        $configuredMax = (int) get_option( 'aurora_feed_max_bytes', $maxBytes );
+        $configuredFlush = (int) get_option( 'aurora_feed_flush_every', $flushEvery );
+        $this->maxBytes = $configuredMax > 0 ? $configuredMax : $maxBytes;
+        $this->flushEvery = $configuredFlush > 0 ? $configuredFlush : $flushEvery;
         $upload = wp_upload_dir();
         $this->dir = trailingslashit($upload['basedir']) . 'aurora-feeds/';
         if ( ! wp_mkdir_p($this->dir) ) {

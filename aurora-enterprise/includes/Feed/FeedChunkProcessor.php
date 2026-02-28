@@ -16,7 +16,8 @@ class FeedChunkProcessor {
     public function __construct(int $batchSize = 500) {
         global $wpdb;
         $this->db = $wpdb;
-        $this->batchSize = $batchSize;
+        $configured = (int) get_option( 'aurora_feed_chunk_size', $batchSize );
+        $this->batchSize = $configured > 0 ? $configured : $batchSize;
     }
 
     /**

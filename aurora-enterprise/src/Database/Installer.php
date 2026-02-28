@@ -167,6 +167,8 @@ class Installer {
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (product_id, scope_region, scope_channel, version),
             KEY idx_version (version),
+            KEY idx_version_product (version, product_id),
+            KEY idx_price_product (product_id),
             KEY idx_price_updated (updated_at)
         ) {$charset};";
 
@@ -184,6 +186,8 @@ class Installer {
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (product_id, scope_region, scope_channel, version),
             KEY idx_version (version),
+            KEY idx_version_product (version, product_id),
+            KEY idx_stock_product (product_id),
             KEY idx_stock_updated (updated_at)
         ) {$charset};";
 
@@ -201,6 +205,8 @@ class Installer {
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (product_id, scope_region, scope_channel, version),
             KEY idx_version (version),
+            KEY idx_version_product (version, product_id),
+            KEY idx_vis_product (product_id),
             KEY idx_visibility_updated (updated_at)
         ) {$charset};";
 

@@ -86,7 +86,9 @@ class Upgrade_Schema {
                 hash BINARY(16) NOT NULL,
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY (product_id, variation_id, scope_region, scope_channel, version),
-                KEY idx_version (version)
+                KEY idx_version (version),
+                KEY idx_version_product (version, product_id),
+                KEY idx_price_product (product_id)
             ) {$charset};",
             'aurora_stock_snapshot' => "CREATE TABLE {$this->prefix}aurora_stock_snapshot (
                 product_id BIGINT UNSIGNED NOT NULL,
