@@ -10,6 +10,7 @@ use Aurora\Enterprise\Feed\FeedLockManager;
 use Aurora\Enterprise\Feed\FeedChunkProcessor;
 use Aurora\Enterprise\Feed\FeedValidator;
 use Aurora\Enterprise\Feed\FeedRunManager;
+use Aurora\Enterprise\Ops\Ops_Run_Manager;
 use function sanitize_key;
 
 class Feed_Command extends WP_CLI_Command {
