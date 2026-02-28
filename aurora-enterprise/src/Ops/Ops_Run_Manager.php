@@ -87,6 +87,18 @@ class Ops_Run_Manager {
         $this->invalidate_status_cache();
     }
 
+    public function mark_partial( int $runId, array $meta ) : void {
+        $now = current_time( 'mysql', true );
+        $this->update( $runId, [
+            'status'      => 'partial',
+            'finished_at' => null,
+            'message'     => $meta['message'] ?? null,
+            'meta_json'   => wp_json_encode( $meta ),
+            'updated_at'  => $now,
+        ] );
+        $this->invalidate_status_cache();
+    }
+
     public function mark_error( int $runId, string $error ) : void {
         $now = current_time( 'mysql', true );
         $this->update( $runId, [
