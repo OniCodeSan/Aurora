@@ -77,7 +77,7 @@ class RepriceRunManager {
 
             $remaining = $max - $processed;
             if ( $remaining <= 0 ) {
-                $this->complete( $runId, $owner, $processed, $updated, $counters );
+                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt );
                 return;
             }
 
