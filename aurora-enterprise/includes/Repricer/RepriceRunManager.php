@@ -111,11 +111,23 @@ class RepriceRunManager {
             } else {
                 $ids = $this->chunks->fetch_next_ids( $lastId, $limit );
             }
-            if ( empty( $ids ) ) {
-                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt, $config );
+            $selectedCount = count( $ids );
+
+            if ( $selectedCount === 0 ) {
+                $this->update_progress( $runId, [
+                    'status'            => 'failed',
+                    'processed_count'   => $processed,
+                    'updated_count'     => $updated,
+                    'selected_count'    => 0,
+                    'decisions_written' => $decisionsWritten,
+                ] );
+                $this->runs->mark_error( $runId, 'No products selected' );
+                $this->logger->error( 'repricer', 'no products selected', [ 'run_id' => $runId ] );
+                $this->lock->release( $owner );
                 return;
             }
-            $selected += count( $ids );
+
+            $selected += $selectedCount;
 
             foreach ( $ids as $productId ) {
                 $decision = $this->decide( $productId, $config );
@@ -144,6 +156,8 @@ class RepriceRunManager {
                 'last_product_id' => $lastId,
                 'processed_count' => $processed,
                 'updated_count'   => $updated,
+                'selected_count'  => $selected,
+                'decisions_written' => $decisionsWritten,
             ] );
         }
     }
@@ -243,6 +257,8 @@ class RepriceRunManager {
             'status'          => 'completed',
             'processed_count' => $processed,
             'updated_count'   => $updated,
+            'selected_count'  => $selected,
+            'decisions_written' => $decisionsWritten,
         ] );
         $summary = [
             'message'   => $updated > 0 ? 'repricer completed' : 'repricer completed (no changes)',
