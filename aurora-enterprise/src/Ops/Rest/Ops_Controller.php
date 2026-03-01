@@ -163,6 +163,7 @@ class Ops_Controller {
             return new WP_Error( 'aurora_ops_run_create_failed', 'Unable to create ops run row.', [ 'status' => 500 ] );
         }
         $run_id = (int) $wpdb->insert_id;
+        $payload['run_id'] = $run_id;
 
         $args = [
             [
