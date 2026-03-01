@@ -39,6 +39,7 @@ class RepriceRunManager {
         $this->logger->info( 'repricer', 'repricer start', [ 'run_id' => $runId, 'payload' => $config ] );
 
         $scope = $payload['scope'] ?? null;
+        $filters = $payload['filters'] ?? [];
         if ( isset( $payload['assignment_id'] ) ) {
             $assignment = $this->assignments->get( (int) $payload['assignment_id'] );
             if ( ! $assignment ) {
@@ -47,7 +48,9 @@ class RepriceRunManager {
             }
             $assignmentScope = json_decode( (string) ( $assignment['scope_json'] ?? '{}' ), true ) ?: [];
             $assignmentRule  = json_decode( (string) ( $assignment['rule_json'] ?? '{}' ), true ) ?: [];
+            $assignmentFilters = json_decode( (string) ( $assignment['filters_json'] ?? '{}' ), true ) ?: [];
             $scope = $scope ?? $assignmentScope;
+            $filters = array_merge( $assignmentFilters, $filters );
             $config = array_merge( $assignmentRule, $config );
             $config['assignment_id'] = (int) $assignment['id'];
         }
@@ -104,7 +107,7 @@ class RepriceRunManager {
 
             $limit = min( $chunkSize, $remaining );
             if ( $scope ) {
-                $ids = $this->resolver->select_product_ids( $scope, $limit, $lastId );
+                $ids = $this->resolver->resolve_product_ids( $scope, $filters, $limit, $lastId );
             } else {
                 $ids = $this->chunks->fetch_next_ids( $lastId, $limit );
             }
