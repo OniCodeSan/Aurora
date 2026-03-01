@@ -56,6 +56,7 @@ class Upgrade_Schema {
         $this->ensureSnapshotTables();
         $this->alterQueueTable();
         $this->ensureCheckpointTable();
+        $this->ensureRepriceDecisions();
     }
 
     private function ensureSnapshotTables() : void {
@@ -263,5 +264,40 @@ class SnapshotShardDoctor {
         } else {
             WP_CLI::log( sprintf( 'Shard check OK (total=%d, max_seen=%d)', $total, $max ) );
         }
+    }
+
+    private function ensureRepriceDecisions() : void {
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        $table = $this->prefix . 'aurora_reprice_decisions';
+        $charset = $this->db->get_charset_collate();
+        $sql = "CREATE TABLE {$table} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            run_id BIGINT UNSIGNED NOT NULL,
+            product_id BIGINT UNSIGNED NOT NULL,
+            variation_id BIGINT UNSIGNED NULL,
+            sku VARCHAR(64) NULL,
+            currency VARCHAR(8) NOT NULL DEFAULT 'EUR',
+            old_price DECIMAL(12,4) NULL,
+            new_price DECIMAL(12,4) NULL,
+            cost DECIMAL(12,4) NULL,
+            margin_before DECIMAL(8,4) NULL,
+            margin_after DECIMAL(8,4) NULL,
+            rule_applied VARCHAR(64) NOT NULL,
+            reason TEXT NULL,
+            applied TINYINT(1) NOT NULL DEFAULT 0,
+            applied_at_utc DATETIME NULL,
+            old_price_applied_from DECIMAL(18,4) NULL,
+            new_price_applied_to DECIMAL(18,4) NULL,
+            rollback_status VARCHAR(32) NULL,
+            rolled_back_at_utc DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY idx_run_id (run_id),
+            KEY idx_product (product_id),
+            KEY run_id_applied (run_id, applied),
+            UNIQUE KEY uniq_run_product (run_id, product_id, variation_id)
+        ) {$charset};";
+        dbDelta( $sql );
+        WP_CLI::log( 'Ensured repricer decisions schema' );
     }
 }

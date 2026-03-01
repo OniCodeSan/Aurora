@@ -156,10 +156,16 @@ class Installer {
             rule_applied VARCHAR(64) NOT NULL,
             reason TEXT NULL,
             applied TINYINT(1) NOT NULL DEFAULT 0,
+            applied_at_utc DATETIME NULL,
+            old_price_applied_from DECIMAL(18,4) NULL,
+            new_price_applied_to DECIMAL(18,4) NULL,
+            rollback_status VARCHAR(32) NULL,
+            rolled_back_at_utc DATETIME NULL,
             created_at DATETIME NOT NULL,
             PRIMARY KEY (id),
             KEY idx_run_id (run_id),
             KEY idx_product (product_id),
+            KEY run_id_applied (run_id, applied),
             UNIQUE KEY uniq_run_product (run_id, product_id, variation_id)
         ) {$charset};";
 
