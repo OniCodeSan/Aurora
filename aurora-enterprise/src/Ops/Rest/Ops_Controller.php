@@ -3,6 +3,7 @@ namespace Aurora\Enterprise\Ops\Rest;
 
 use Aurora\Enterprise\Ops\System_Status_Provider;
 use Aurora\Enterprise\Ops\Ops_Run_Manager;
+use Aurora\Enterprise\Ops\Ops_Dispatcher;
 use WP_REST_Server;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -111,10 +112,78 @@ class Ops_Controller {
             'callback'            => [ $this, 'feed_run' ],
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/run', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_run' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
     }
 
     public function get_status() : WP_REST_Response {
         return new WP_REST_Response( $this->provider->get_status() );
+    }
+
+    public function repricer_run( WP_REST_Request $request ) {
+        global $wpdb;
+        $existing = $wpdb->get_var(
+            "SELECT id FROM {$wpdb->prefix}aurora_ops_runs WHERE op_key='repricer_run' AND status IN ('requested','running','partial') ORDER BY id DESC LIMIT 1"
+        );
+        if ( $existing ) {
+            return new WP_Error( 'aurora_ops_repricer_busy', 'Repricer run already in progress', [ 'status' => 409, 'run_id' => (int) $existing ] );
+        }
+
+        $payload = [
+            'max_products'       => (int) ( $request['max_products'] ?? 10000 ),
+            'chunk_size'         => (int) ( $request['chunk_size'] ?? 500 ),
+            'timebox_seconds'    => (int) ( $request['timebox_seconds'] ?? 90 ),
+            'min_margin_percent' => isset( $request['min_margin_percent'] ) ? (float) $request['min_margin_percent'] : 0.0,
+            'min_margin_abs'     => isset( $request['min_margin_abs'] ) ? (float) $request['min_margin_abs'] : 0.0,
+            'dry_run'            => array_key_exists( 'dry_run', $request->get_json_params() ?? [] ) ? (bool) $request['dry_run'] : true,
+        ];
+
+        $now = current_time( 'mysql', true );
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'aurora_ops_runs',
+            [
+                'op_key'       => 'repricer_run',
+                'action_type'  => 'repricer_run',
+                'status'       => 'requested',
+                'requested_at' => $now,
+                'started_at'   => null,
+                'finished_at'  => null,
+                'message'      => null,
+                'error'        => null,
+                'meta_json'    => wp_json_encode( $payload ),
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ]
+        );
+        if ( false === $inserted ) {
+            return new WP_Error( 'aurora_ops_run_create_failed', 'Unable to create ops run row.', [ 'status' => 500 ] );
+        }
+        $run_id = (int) $wpdb->insert_id;
+
+        $args = [
+            [
+                'run_id'  => $run_id,
+                'op_key'  => 'repricer_run',
+                'payload' => $payload,
+            ],
+        ];
+
+        if ( function_exists( 'as_has_scheduled_action' ) && as_has_scheduled_action( 'aurora_ops_dispatch', $args, 'aurora' ) ) {
+            return new WP_REST_Response( [ 'ok' => true, 'run_id' => $run_id, 'scheduled' => true ], 200 );
+        }
+
+        if ( function_exists( 'as_enqueue_async_action' ) ) {
+            $action_id = as_enqueue_async_action( 'aurora_ops_dispatch', $args, 'aurora' );
+            if ( $action_id > 0 ) {
+                return new WP_REST_Response( [ 'ok' => true, 'run_id' => $run_id, 'scheduled' => true ], 200 );
+            }
+        }
+
+        return new WP_Error( 'aurora_ops_schedule_failed', 'Failed to schedule repricer run.', [ 'status' => 500 ] );
     }
 
     public function trigger_rebuild( WP_REST_Request $request ) {
