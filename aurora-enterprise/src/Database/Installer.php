@@ -176,6 +176,22 @@ class Installer {
             KEY last_product (last_product_id)
         ) {$charset};";
 
+        $schema[] = "CREATE TABLE {$prefix}aurora_reprice_assignments (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name VARCHAR(190) NOT NULL,
+            enabled TINYINT(1) NOT NULL DEFAULT 1,
+            scope_type VARCHAR(50) NOT NULL,
+            scope_json LONGTEXT NOT NULL,
+            rule_json LONGTEXT NOT NULL,
+            last_run_id BIGINT UNSIGNED NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY enabled (enabled),
+            KEY scope_type (scope_type),
+            KEY last_run_id (last_run_id)
+        ) {$charset};";
+
         $schema[] = "CREATE TABLE {$prefix}aurora_snapshot_versions (
             table_name VARCHAR(64) NOT NULL,
             current_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
