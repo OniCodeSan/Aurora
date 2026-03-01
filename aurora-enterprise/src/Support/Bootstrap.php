@@ -4,6 +4,7 @@ namespace Aurora\Enterprise\Support;
 use function error_log;
 
 use Aurora\Enterprise\Admin\Dashboard;
+use Aurora\Enterprise\Admin\Repricer_Status_Page;
 use Aurora\Enterprise\CLI\Enqueue_Command;
 use Aurora\Enterprise\CLI\Worker_Command;
 use Aurora\Enterprise\CLI\Rebuild_Command;
@@ -61,6 +62,7 @@ class Bootstrap {
     private function register_admin() : void {
         ( new Dashboard() )->hooks();
         ( new System_Status_Page() )->hooks();
+        ( new Repricer_Status_Page() )->hooks();
     }
 
     private function register_events() : void {

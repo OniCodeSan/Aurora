@@ -20,6 +20,7 @@ class System_Status_Provider {
         $snap   = $this->snapshot_status();
         $feed   = $this->last_feed();
         $runs   = $this->runs->recent_runs( 20 );
+        $repricer = $this->repricer_status();
 
         [ $healthStatus, $reasons ] = $this->health_rules( $queues, $snap );
 
@@ -41,6 +42,7 @@ class System_Status_Provider {
             'snapshots'=> $snap,
             'feed'     => $feed,
             'last_runs'=> $runs,
+            'repricer' => $repricer,
         ];
 
         set_transient( self::CACHE_KEY, $data, self::CACHE_TTL );
@@ -125,5 +127,113 @@ class System_Status_Provider {
         }
 
         return [ $status, $reasons ];
+    }
+
+    private function repricer_status() : array {
+        global $wpdb;
+        $prefix = $wpdb->prefix;
+        $tables = [
+            'runs'      => $prefix . 'aurora_ops_runs',
+            'progress'  => $prefix . 'aurora_reprice_progress',
+            'decisions' => $prefix . 'aurora_reprice_decisions',
+        ];
+
+        foreach ( $tables as $key => $table ) {
+            $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+            if ( ! $exists ) {
+                return [
+                    'tables_missing'    => true,
+                    'missing_table_key' => $key,
+                    'last_run'          => null,
+                    'progress'          => null,
+                    'decisions'         => [
+                        'decisions_count'  => 0,
+                        'distinct_products'=> 0,
+                        'breakdown'        => [],
+                    ],
+                    'recent_decisions'  => [],
+                ];
+            }
+        }
+
+        $lastRun = $wpdb->get_row(
+            "SELECT id, op_key, status, message, error, requested_at, started_at, finished_at, updated_at
+             FROM {$tables['runs']}
+             WHERE op_key = 'repricer_run'
+             ORDER BY id DESC
+             LIMIT 1",
+            ARRAY_A
+        );
+
+        $progress = null;
+        if ( $lastRun ) {
+            $progress = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT run_id, status, processed_count, updated_count, last_product_id, started_at, updated_at
+                     FROM {$tables['progress']}
+                     WHERE run_id = %d
+                     LIMIT 1",
+                    (int) $lastRun['id']
+                ),
+                ARRAY_A
+            );
+        }
+
+        $decisionsCount = 0;
+        $distinctProducts = 0;
+        $breakdown = [];
+        $recent = [];
+
+        if ( $lastRun ) {
+            $runId = (int) $lastRun['id'];
+            $decisionsCount = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$tables['decisions']} WHERE run_id = %d",
+                    $runId
+                )
+            );
+            $distinctProducts = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT product_id) FROM {$tables['decisions']} WHERE run_id = %d",
+                    $runId
+                )
+            );
+            $breakdown = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT rule_applied, COUNT(*) AS c
+                     FROM {$tables['decisions']}
+                     WHERE run_id = %d
+                     GROUP BY rule_applied
+                     ORDER BY c DESC
+                     LIMIT 10",
+                    $runId
+                ),
+                ARRAY_A
+            ) ?: [];
+
+            $recent = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT product_id, variation_id, old_price, new_price, rule_applied, created_at
+                     FROM {$tables['decisions']}
+                     WHERE run_id = %d
+                     ORDER BY id DESC
+                     LIMIT 5",
+                    $runId
+                ),
+                ARRAY_A
+            ) ?: [];
+        }
+
+        return [
+            'tables_missing'    => false,
+            'last_run'          => $lastRun ?: null,
+            'progress'          => $progress,
+            'decisions'         => [
+                'decisions_count'   => $decisionsCount,
+                'distinct_products' => $distinctProducts,
+                'breakdown'         => $breakdown,
+            ],
+            'recent_decisions'  => $recent,
+        ];
     }
 }
