@@ -1,6 +1,8 @@
 <?php
 namespace Aurora\Enterprise\Ops;
 
+use Aurora\Enterprise\Repricer\RepriceAssignmentRepository;
+
 class System_Status_Provider {
     private Ops_Run_Manager $runs;
     private const CACHE_KEY = 'aurora_system_status_v1';
@@ -156,6 +158,8 @@ class System_Status_Provider {
             }
         }
 
+        $assignRepo = new \Aurora\Enterprise\Repricer\RepriceAssignmentRepository();
+
         $lastRun = $wpdb->get_row(
             "SELECT id, op_key, status, message, error, requested_at, started_at, finished_at, updated_at
              FROM {$tables['runs']}
@@ -234,6 +238,8 @@ class System_Status_Provider {
                 'breakdown'         => $breakdown,
             ],
             'recent_decisions'  => $recent,
+            'assignments_count' => $assignRepo->count_enabled(),
+            'last_assignment'   => $assignRepo->last_assignment(),
         ];
     }
 }
