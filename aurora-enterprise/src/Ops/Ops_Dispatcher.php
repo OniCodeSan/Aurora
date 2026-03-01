@@ -58,8 +58,14 @@ class Ops_Dispatcher {
         error_log( sprintf( '[Aurora] Ops_Dispatcher start: run_id=%d op_key=%s', $run_id, $op_key ) );
         try {
             $result = $this->executor->execute( $op_key, $payload );
-            $this->runs->mark_success( $run_id, $result );
-            error_log( sprintf( '[Aurora] Ops_Dispatcher success: run_id=%d op_key=%s message=%s', $run_id, $op_key, (string) ( $result['message'] ?? '' ) ) );
+            $updated = $this->runs->find( $run_id );
+            $statusAfter = (string) ( $updated['status'] ?? '' );
+            if ( in_array( $statusAfter, [ 'success', 'error', 'partial' ], true ) ) {
+                error_log( sprintf( '[Aurora] Ops_Dispatcher skip mark_success (already %s): run_id=%d op_key=%s', $statusAfter, $run_id, $op_key ) );
+            } else {
+                $this->runs->mark_success( $run_id, $result );
+                error_log( sprintf( '[Aurora] Ops_Dispatcher success: run_id=%d op_key=%s message=%s', $run_id, $op_key, (string) ( $result['message'] ?? '' ) ) );
+            }
         } catch ( \Throwable $exception ) {
             $this->runs->mark_error( $run_id, $exception->getMessage() );
             error_log( sprintf( '[Aurora] Ops_Dispatcher error: run_id=%d op_key=%s error=%s', $run_id, $op_key, $exception->getMessage() ) );
