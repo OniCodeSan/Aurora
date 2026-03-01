@@ -16,6 +16,7 @@ use Aurora\Enterprise\CLI\Test_Command;
 use Aurora\Enterprise\CLI\Queue_Backfill_Shards_Command;
 use Aurora\Enterprise\CLI\Upgrade_Command;
 use Aurora\Enterprise\CLI\Product_Seed_Command;
+use Aurora\Enterprise\CLI\Repricer_Command;
 use Aurora\Enterprise\Events\Product_Event_Subscriber;
 use Aurora\Enterprise\Queue\Queue_Manager;
 use Aurora\Enterprise\Queue\DatabaseQueue;
@@ -92,6 +93,7 @@ class Bootstrap {
             \WP_CLI::add_command( 'aurora migrate snapshot-v2', [ $migrateCommand, 'snapshot_v2' ] );
             \WP_CLI::add_command( 'aurora feed', new Feed_Command() );
             \WP_CLI::add_command( 'aurora upgrade', new Upgrade_Command() );
+            \WP_CLI::add_command( 'aurora repricer', new Repricer_Command() );
         }
     }
 
