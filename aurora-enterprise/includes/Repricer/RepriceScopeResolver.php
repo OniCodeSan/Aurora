@@ -29,12 +29,14 @@ class RepriceScopeResolver {
             $limit = min( $limit, $filtersLimit );
         }
 
-        $type = $scope['type'] ?? '';
+        $type = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
         switch ( $type ) {
             case 'products':
                 return $this->by_products_list( $scope, $filters, $limit, $after_id );
             case 'brand':
+            case 'product_brand':
                 return $this->by_taxonomy_scope( $scope, $filters, $limit, $after_id, $this->brand_taxonomy() );
+            case 'product_cat':
             case 'category':
                 return $this->by_taxonomy_scope( $scope, $filters, $limit, $after_id, 'product_cat' );
             default:
@@ -50,7 +52,10 @@ class RepriceScopeResolver {
         $ids = array_map( 'intval', $scope['products'] ?? [] );
         $ids = array_filter( $ids, static fn( $v ) => $v > $after_id );
         sort( $ids, SORT_NUMERIC );
-        $ids = $this->apply_excludes_array( $ids, $filters );
+        $ids = $this->apply_excludes_array( $ids, $filters, $scope );
+        $ids = $this->filter_require_price( $ids, $filters );
+        $ids = $this->filter_require_cost( $ids, $filters );
+        $ids = $this->apply_price_bounds( $ids, $filters );
         return array_slice( $ids, 0, $limit );
     }
 
@@ -63,14 +68,18 @@ class RepriceScopeResolver {
             return [];
         }
 
-        $termKey = 'brand' === $scope['type'] ? 'brand_term_id' : 'category_term_id';
-        $termId = (int) ( $scope[ $termKey ] ?? 0 );
+        $scopeType = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
+        $termKey   = str_starts_with( $scopeType, 'brand' ) ? 'brand_term_id' : 'category_term_id';
+        $termId    = (int) ( $scope[ $termKey ] ?? 0 );
+        if ( $termId <= 0 && ! empty( $scope['categories'] ) && is_array( $scope['categories'] ) ) {
+            $termId = (int) reset( $scope['categories'] );
+        }
         if ( $termId <= 0 ) {
             return [];
         }
 
         $termIds = [ $termId ];
-        $includeChildren = ! empty( $filters['include_children'] ) && $taxonomy === 'product_cat';
+        $includeChildren = ( ! empty( $filters['include_children'] ) || ! empty( $scope['include_children'] ) ) && $taxonomy === 'product_cat';
         if ( $includeChildren ) {
             $children = get_term_children( $termId, $taxonomy );
             if ( is_array( $children ) && ! empty( $children ) ) {
@@ -105,7 +114,7 @@ class RepriceScopeResolver {
 
         $where = array_merge( $where, $joinsFilters['where'] );
 
-        $excludeSql = $this->build_exclusions_sql( $filters, 'p.ID' );
+        $excludeSql = $this->build_exclusions_sql( $filters, 'p.ID', $scope );
         if ( '' !== $excludeSql ) {
             $where[] = $excludeSql;
         }
@@ -116,7 +125,13 @@ class RepriceScopeResolver {
 
         $prepared = $this->db->prepare( implode( ' ', $sql ), $params );
         $ids = $this->db->get_col( $prepared );
-        return array_map( 'intval', $ids ?: [] );
+        $ids = $ids ?: [];
+        $ids = array_map( 'intval', $ids );
+        $ids = $this->apply_excludes_array( $ids, $filters, $scope );
+        $ids = $this->filter_require_price( $ids, $filters );
+        $ids = $this->filter_require_cost( $ids, $filters );
+        $ids = $this->apply_price_bounds( $ids, $filters );
+        return $ids;
     }
 
     private function brand_taxonomy() : ?string {
@@ -196,14 +211,19 @@ class RepriceScopeResolver {
     /**
      * @param array<string,mixed> $filters
      */
-    private function build_exclusions_sql( array $filters, string $field = 'p.ID' ) : string {
+    private function build_exclusions_sql( array $filters, string $field = 'p.ID', array $scope = [] ) : string {
         $clauses = [];
 
+        $excludeProducts = [];
         if ( ! empty( $filters['exclude_products'] ) ) {
-            $ids = array_values( array_filter( array_map( 'intval', (array) $filters['exclude_products'] ), static fn( $v ) => $v > 0 ) );
-            if ( ! empty( $ids ) ) {
-                $clauses[] = $field . ' NOT IN (' . implode( ',', $ids ) . ')';
-            }
+            $excludeProducts = array_merge( $excludeProducts, (array) $filters['exclude_products'] );
+        }
+        if ( ! empty( $scope['exclude_products'] ) ) {
+            $excludeProducts = array_merge( $excludeProducts, (array) $scope['exclude_products'] );
+        }
+        $excludeProducts = array_values( array_filter( array_map( 'intval', $excludeProducts ), static fn( $v ) => $v > 0 ) );
+        if ( ! empty( $excludeProducts ) ) {
+            $clauses[] = $field . ' NOT IN (' . implode( ',', $excludeProducts ) . ')';
         }
 
         if ( ! empty( $filters['exclude_categories'] ) ) {
@@ -231,12 +251,88 @@ class RepriceScopeResolver {
      * @param array<string,mixed> $filters
      * @return array<int>
      */
-    private function apply_excludes_array( array $ids, array $filters ) : array {
-        if ( empty( $filters['exclude_products'] ) ) {
+    private function apply_excludes_array( array $ids, array $filters, array $scope = [] ) : array {
+        $exclude = [];
+        if ( ! empty( $filters['exclude_products'] ) ) {
+            $exclude = array_merge( $exclude, (array) $filters['exclude_products'] );
+        }
+        if ( ! empty( $scope['exclude_products'] ) ) {
+            $exclude = array_merge( $exclude, (array) $scope['exclude_products'] );
+        }
+        $exclude = array_values( array_filter( array_map( 'intval', $exclude ), static fn( $v ) => $v > 0 ) );
+        if ( empty( $exclude ) ) {
             return $ids;
         }
-        $exclude = array_map( 'intval', (array) $filters['exclude_products'] );
         return array_values( array_diff( $ids, $exclude ) );
+    }
+
+    /**
+     * @param array<int> $ids
+     * @return array<int>
+     */
+    private function filter_require_price( array $ids, array $filters ) : array {
+        if ( empty( $filters['require_price'] ) || empty( $ids ) ) {
+            return $ids;
+        }
+        $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+        $sql = $this->db->prepare(
+            "SELECT post_id FROM {$this->db->postmeta} WHERE meta_key='_price' AND post_id IN ({$placeholders}) AND meta_value IS NOT NULL AND meta_value <> '' AND CAST(meta_value AS DECIMAL(18,4)) > 0",
+            $ids
+        );
+        $rows = $this->db->get_col( $sql );
+        return array_values( array_map( 'intval', $rows ?: [] ) );
+    }
+
+    /**
+     * @param array<int> $ids
+     * @return array<int>
+     */
+    private function filter_require_cost( array $ids, array $filters ) : array {
+        if ( empty( $filters['require_cost'] ) || empty( $ids ) ) {
+            return $ids;
+        }
+        $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+        $sql = $this->db->prepare(
+            "SELECT DISTINCT post_id FROM {$this->db->postmeta} WHERE post_id IN ({$placeholders}) AND meta_key IN ('_aurora_cost','_cost') AND meta_value IS NOT NULL AND meta_value <> '' AND CAST(meta_value AS DECIMAL(18,4)) > 0",
+            $ids
+        );
+        $rows = $this->db->get_col( $sql );
+        return array_values( array_map( 'intval', $rows ?: [] ) );
+    }
+
+    /**
+     * @param array<int> $ids
+     * @param array<string,mixed> $filters
+     * @return array<int>
+     */
+    private function apply_price_bounds( array $ids, array $filters ) : array {
+        if ( empty( $ids ) ) {
+            return $ids;
+        }
+        $min = isset( $filters['min_price'] ) && $filters['min_price'] !== '' ? (float) $filters['min_price'] : null;
+        $max = isset( $filters['max_price'] ) && $filters['max_price'] !== '' ? (float) $filters['max_price'] : null;
+        if ( null === $min && null === $max ) {
+            return $ids;
+        }
+
+        $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+        $bounds = [];
+        $params = $ids;
+        if ( null !== $min ) {
+            $bounds[] = 'CAST(meta_value AS DECIMAL(18,4)) >= %f';
+            $params[] = $min;
+        }
+        if ( null !== $max ) {
+            $bounds[] = 'CAST(meta_value AS DECIMAL(18,4)) <= %f';
+            $params[] = $max;
+        }
+        $where = implode( ' AND ', $bounds );
+        $sql = $this->db->prepare(
+            "SELECT post_id FROM {$this->db->postmeta} WHERE meta_key='_price' AND post_id IN ({$placeholders}) AND {$where}",
+            $params
+        );
+        $rows = $this->db->get_col( $sql );
+        return array_values( array_map( 'intval', $rows ?: [] ) );
     }
 
     private function limitSql( int $limit ) : string {
