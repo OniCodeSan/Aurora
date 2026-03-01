@@ -37,9 +37,13 @@ class RepriceRunManager {
             return;
         }
 
-        if ( ! $this->runs->mark_running( $runId ) ) {
-            $this->lock->release( $owner );
-            return;
+        $current = $this->runs->find( $runId );
+        $status  = (string) ( $current['status'] ?? '' );
+        if ( 'running' !== $status ) {
+            if ( ! $this->runs->mark_running( $runId ) ) {
+                $this->lock->release( $owner );
+                return;
+            }
         }
 
         $progress = $this->load_or_create_progress( $runId );
