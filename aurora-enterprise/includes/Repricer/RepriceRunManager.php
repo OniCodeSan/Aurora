@@ -177,7 +177,7 @@ class RepriceRunManager {
             'counters'  => $counters,
         ];
         $this->runs->mark_partial( $runId, $summary );
-        $this->logger->warning( 'repricer', 'repricer partial', [ 'run_id' => $runId ] + $summary );
+        $this->logger->info( 'repricer', 'repricer partial', [ 'run_id' => $runId ] + $summary );
         $this->lock->release( $owner );
         $this->reschedule( $runId, $payload );
     }
@@ -263,43 +263,42 @@ class RepriceRunManager {
 
     private function insert_decision( array $data ) : bool {
         $table = $this->db->prefix . 'aurora_reprice_decisions';
-        $formats = [
-            '%d', // run_id
-            '%d', // product_id
-            '%d', // variation_id
-            '%s', // sku
-            '%s', // currency
-            '%f', // old_price
-            '%f', // new_price
-            '%f', // cost
-            '%f', // margin_before
-            '%f', // margin_after
-            '%s', // rule_applied
-            '%s', // reason
-            '%d', // applied
-            '%s', // created_at
-        ];
-        $values = [
-            $data['run_id'],
-            $data['product_id'],
-            $data['variation_id'] ?? null,
-            $data['sku'],
-            $data['currency'],
-            $data['old_price'],
-            $data['new_price'],
-            $data['cost'],
-            $data['margin_before'],
-            $data['margin_after'],
-            $data['rule_applied'],
-            $data['reason'],
-            $data['applied'],
-            $data['created_at'],
-        ];
-        $inserted = $this->db->insert( $table, $values, $formats );
-        if ( false === $inserted ) {
-            return false;
-        }
-        return true;
+        $inserted = $this->db->insert(
+            $table,
+            [
+                'run_id'        => $data['run_id'],
+                'product_id'    => $data['product_id'],
+                'variation_id'  => $data['variation_id'] ?? null,
+                'sku'           => $data['sku'],
+                'currency'      => $data['currency'],
+                'old_price'     => $data['old_price'],
+                'new_price'     => $data['new_price'],
+                'cost'          => $data['cost'],
+                'margin_before' => $data['margin_before'],
+                'margin_after'  => $data['margin_after'],
+                'rule_applied'  => $data['rule_applied'],
+                'reason'        => $data['reason'],
+                'applied'       => $data['applied'],
+                'created_at'    => $data['created_at'],
+            ],
+            [
+                '%d',
+                '%d',
+                '%d',
+                '%s',
+                '%s',
+                '%f',
+                '%f',
+                '%f',
+                '%f',
+                '%f',
+                '%s',
+                '%s',
+                '%d',
+                '%s',
+            ]
+        );
+        return false !== $inserted;
     }
 
     private function memory_guard_triggered( float $ratio ) : bool {
