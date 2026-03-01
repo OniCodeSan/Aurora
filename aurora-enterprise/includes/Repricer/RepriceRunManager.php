@@ -46,9 +46,9 @@ class RepriceRunManager {
                 $this->runs->mark_error( $runId, 'Assignment not found or disabled' );
                 return;
             }
-            $assignmentScope = json_decode( (string) ( $assignment['scope_json'] ?? '{}' ), true ) ?: [];
-            $assignmentRule  = json_decode( (string) ( $assignment['rule_json'] ?? '{}' ), true ) ?: [];
-            $assignmentFilters = json_decode( (string) ( $assignment['filters_json'] ?? '{}' ), true ) ?: [];
+            $assignmentScope = is_array( $assignment['scope_json'] ?? null ) ? $assignment['scope_json'] : ( json_decode( (string) ( $assignment['scope_json'] ?? '{}' ), true ) ?: [] );
+            $assignmentRule  = is_array( $assignment['rule_json'] ?? null ) ? $assignment['rule_json'] : ( json_decode( (string) ( $assignment['rule_json'] ?? '{}' ), true ) ?: [] );
+            $assignmentFilters = is_array( $assignment['filters_json'] ?? null ) ? $assignment['filters_json'] : ( json_decode( (string) ( $assignment['filters_json'] ?? '{}' ), true ) ?: [] );
             $scope = $scope ?? $assignmentScope;
             $filters = array_merge( $assignmentFilters, $filters );
             $config = array_merge( $assignmentRule, $config );
@@ -86,6 +86,19 @@ class RepriceRunManager {
         $decisionsWritten = 0;
         $selected = 0;
         $appliedCount = 0;
+
+        if ( ! is_array( $scope ) || empty( $scope ) ) {
+            $this->update_progress( $runId, [
+                'status'            => 'failed',
+                'processed_count'   => 0,
+                'updated_count'     => 0,
+                'selected_count'    => 0,
+                'decisions_written' => 0,
+            ] );
+            $this->runs->mark_error( $runId, 'No products selected' );
+            $this->lock->release( $owner );
+            return;
+        }
 
         $timebox   = (int) $config['timebox_seconds'];
         $memGuard  = (float) $config['memory_guard_ratio'];
