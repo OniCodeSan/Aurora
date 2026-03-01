@@ -47,7 +47,13 @@ class RepriceAssignmentRepository {
             ),
             ARRAY_A
         );
-        return is_array( $row ) ? $row : null;
+        if ( ! is_array( $row ) ) {
+            return null;
+        }
+        $row['scope_json']   = $this->decode_json_array( $row['scope_json'] ?? [] );
+        $row['filters_json'] = $this->decode_json_array( $row['filters_json'] ?? [] );
+        $row['rule_json']    = $this->decode_json_array( $row['rule_json'] ?? [] );
+        return $row;
     }
 
     public function list( int $limit = 50, int $offset = 0 ) : array {
@@ -59,7 +65,15 @@ class RepriceAssignmentRepository {
             ),
             ARRAY_A
         );
-        return $rows ?: [];
+        if ( empty( $rows ) ) {
+            return [];
+        }
+        foreach ( $rows as &$row ) {
+            $row['scope_json']   = $this->decode_json_array( $row['scope_json'] ?? [] );
+            $row['filters_json'] = $this->decode_json_array( $row['filters_json'] ?? [] );
+            $row['rule_json']    = $this->decode_json_array( $row['rule_json'] ?? [] );
+        }
+        return $rows;
     }
 
     public function touch_last_run( int $id, int $run_id ) : void {
@@ -83,5 +97,22 @@ class RepriceAssignmentRepository {
             ARRAY_A
         );
         return is_array( $row ) ? $row : null;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<string,mixed>
+     */
+    private function decode_json_array( $value ) : array {
+        if ( is_array( $value ) ) {
+            return $value;
+        }
+        if ( is_string( $value ) && $value !== '' ) {
+            $decoded = json_decode( $value, true );
+            if ( is_array( $decoded ) ) {
+                return $decoded;
+            }
+        }
+        return [];
     }
 }
