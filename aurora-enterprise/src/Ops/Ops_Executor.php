@@ -16,6 +16,7 @@ use Aurora\Enterprise\Feed\FeedRunManager;
 use Aurora\Enterprise\Repricer\RepriceLockManager;
 use Aurora\Enterprise\Repricer\RepriceChunkProcessor;
 use Aurora\Enterprise\Repricer\RepriceRunManager;
+use Aurora\Enterprise\Support\Logger;
 
 class Ops_Executor {
     /**
@@ -192,14 +193,54 @@ class Ops_Executor {
         if ( $runId <= 0 ) {
             throw new \RuntimeException( 'Missing run_id for repricer_run' );
         }
+        $normalized = $this->normalize_reprice_payload( $payload );
+        ( new Logger() )->info( 'repricer', 'repricer normalized payload', [ 'run_id' => $runId, 'payload' => $normalized ] );
         $manager = new RepriceRunManager(
             new RepriceChunkProcessor(),
             new RepriceLockManager()
         );
-        $manager->start( $runId, $payload );
+        $manager->start( $runId, $normalized );
         return [
             'message' => 'repricer_run',
             'run_id'  => $runId,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function normalize_reprice_payload( array $payload ) : array {
+        $map = [
+            'maxProducts'        => 'max_products',
+            'max_products'       => 'max_products',
+            'chunkSize'          => 'chunk_size',
+            'chunk_size'         => 'chunk_size',
+            'timeboxSeconds'     => 'timebox_seconds',
+            'timebox_seconds'    => 'timebox_seconds',
+            'timebox'            => 'timebox_seconds',
+            'minMarginPercent'   => 'min_margin_percent',
+            'min_margin_percent' => 'min_margin_percent',
+            'minMarginAbs'       => 'min_margin_abs',
+            'min_margin_abs'     => 'min_margin_abs',
+            'dryRun'             => 'dry_run',
+            'dry_run'            => 'dry_run',
+        ];
+
+        $normalized = [];
+        foreach ( $payload as $key => $value ) {
+            $target = $map[ $key ] ?? $key;
+            $normalized[ $target ] = $value;
+        }
+
+        return [
+            'run_id'             => (int) ( $normalized['run_id'] ?? $payload['run_id'] ?? 0 ),
+            'max_products'       => isset( $normalized['max_products'] ) ? (int) $normalized['max_products'] : 10000,
+            'chunk_size'         => isset( $normalized['chunk_size'] ) ? (int) $normalized['chunk_size'] : 500,
+            'timebox_seconds'    => isset( $normalized['timebox_seconds'] ) ? (int) $normalized['timebox_seconds'] : 90,
+            'min_margin_percent' => isset( $normalized['min_margin_percent'] ) ? (float) $normalized['min_margin_percent'] : 0.0,
+            'min_margin_abs'     => isset( $normalized['min_margin_abs'] ) ? (float) $normalized['min_margin_abs'] : 0.0,
+            'dry_run'            => array_key_exists( 'dry_run', $normalized ) ? (bool) $normalized['dry_run'] : true,
         ];
     }
 }

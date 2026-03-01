@@ -30,6 +30,7 @@ class RepriceRunManager {
         $config = $this->config( $payload );
         $owner  = wp_generate_uuid4();
         $startedAt = microtime( true );
+        $this->logger->info( 'repricer', 'repricer start', [ 'run_id' => $runId, 'payload' => $config ] );
 
         if ( ! $this->lock->acquire( $owner ) ) {
             $this->handle_lock_busy( $runId, $payload );
@@ -49,6 +50,8 @@ class RepriceRunManager {
             'no_change'    => 0,
             'floor_margin' => 0,
         ];
+        $decisionsWritten = 0;
+        $selected = 0;
 
         $timebox   = (int) $config['timebox_seconds'];
         $memGuard  = (float) $config['memory_guard_ratio'];
@@ -77,15 +80,17 @@ class RepriceRunManager {
             $limit = min( $chunkSize, $remaining );
             $ids   = $this->chunks->fetch_next_ids( $lastId, $limit );
             if ( empty( $ids ) ) {
-                $this->complete( $runId, $owner, $processed, $updated, $counters );
+                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt );
                 return;
             }
+            $selected += count( $ids );
 
             foreach ( $ids as $productId ) {
                 $decision = $this->decide( $productId, $config );
                 $decision['run_id']     = $runId;
                 $decision['created_at'] = current_time( 'mysql', true );
                 if ( $this->insert_decision( $decision ) ) {
+                    $decisionsWritten++;
                     $processed++;
                     $counters[ $decision['rule_applied'] ] = ( $counters[ $decision['rule_applied'] ] ?? 0 ) + 1;
                     if ( 'floor_margin' === $decision['rule_applied'] ) {
@@ -182,7 +187,17 @@ class RepriceRunManager {
         $this->reschedule( $runId, $payload );
     }
 
-    private function complete( int $runId, string $owner, int $processed, int $updated, array $counters ) : void {
+    private function complete( int $runId, string $owner, int $processed, int $updated, array $counters, int $selected, int $decisionsWritten, float $startedAt ) : void {
+        $duration = microtime( true ) - $startedAt;
+        if ( $selected <= 0 ) {
+            $this->fail_run( $runId, $owner, 'No products selected', $counters, $processed, $updated, $selected, $decisionsWritten, $duration );
+            return;
+        }
+        if ( $decisionsWritten <= 0 ) {
+            $lastError = $this->db->last_error;
+            $this->fail_run( $runId, $owner, 'No decisions written', $counters, $processed, $updated, $selected, $decisionsWritten, $duration, $lastError );
+            return;
+        }
         $this->update_progress( $runId, [
             'status'          => 'completed',
             'processed_count' => $processed,
@@ -192,6 +207,10 @@ class RepriceRunManager {
             'message'   => 'repricer completed',
             'processed' => $processed,
             'updated'   => $updated,
+            'selected'  => $selected,
+            'decisions' => $decisionsWritten,
+            'duration'  => $duration,
+            'peak_mem'  => memory_get_peak_usage( true ),
             'counters'  => $counters,
         ];
         $this->runs->mark_success( $runId, $summary );
@@ -331,5 +350,26 @@ class RepriceRunManager {
         if ( function_exists( 'as_enqueue_async_action' ) ) {
             as_enqueue_async_action( 'aurora_ops_dispatch', $args, 'aurora' );
         }
+    }
+
+    private function fail_run( int $runId, string $owner, string $message, array $counters, int $processed, int $updated, int $selected, int $decisions, float $duration, string $lastError = '' ) : void {
+        $summary = [
+            'message'   => $message,
+            'processed' => $processed,
+            'updated'   => $updated,
+            'selected'  => $selected,
+            'decisions' => $decisions,
+            'duration'  => $duration,
+            'last_error'=> $lastError,
+            'counters'  => $counters,
+        ];
+        $this->update_progress( $runId, [
+            'status'          => 'failed',
+            'processed_count' => $processed,
+            'updated_count'   => $updated,
+        ] );
+        $this->runs->mark_error( $runId, $message );
+        $this->logger->error( 'repricer', 'repricer failed', [ 'run_id' => $runId ] + $summary );
+        $this->lock->release( $owner );
     }
 }
