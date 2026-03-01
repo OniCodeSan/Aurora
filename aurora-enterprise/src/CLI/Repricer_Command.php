@@ -4,6 +4,7 @@ namespace Aurora\Enterprise\CLI;
 use WP_CLI_Command;
 use WP_CLI;
 use Aurora\Enterprise\Repricer\RepriceRunManager;
+use Aurora\Enterprise\Repricer\RepriceAssignmentRepository;
 use Aurora\Enterprise\Ops\Ops_Run_Manager;
 
 class Repricer_Command extends WP_CLI_Command {
@@ -101,5 +102,115 @@ class Repricer_Command extends WP_CLI_Command {
         } else {
             WP_CLI::success( sprintf( 'repricer simulate run_id=%d status=%s', $run_id, $status ) );
         }
+    }
+
+    /**
+     * Run repricer by assignment (sync, no Action Scheduler).
+     *
+     * ## OPTIONS
+     * --assignment=<id>
+     * [--timebox_seconds=<int>]
+     * [--chunk=<int>]
+     */
+    public function run( array $args, array $assoc_args ) : void {
+        $assignmentId = isset( $assoc_args['assignment'] ) ? (int) $assoc_args['assignment'] : 0;
+        if ( $assignmentId <= 0 ) {
+            WP_CLI::error( 'assignment id required' );
+        }
+        delete_option( 'aurora_reprice_lock' );
+        $payload = [
+            'assignment_id'   => $assignmentId,
+            'timebox_seconds' => isset( $assoc_args['timebox_seconds'] ) ? (int) $assoc_args['timebox_seconds'] : 90,
+            'chunk_size'      => isset( $assoc_args['chunk'] ) ? (int) $assoc_args['chunk'] : 500,
+            'dry_run'         => true,
+        ];
+        $run_id = $this->create_run_row( $payload );
+        $manager = new RepriceRunManager();
+        $manager->start( $run_id, $payload );
+        $run = Ops_Run_Manager::instance()->find( $run_id );
+        WP_CLI::success( sprintf( 'repricer run assignment_id=%d run_id=%d status=%s', $assignmentId, $run_id, $run['status'] ?? 'n/a' ) );
+    }
+
+    /**
+     * Create an assignment.
+     *
+     * ## OPTIONS
+     * --name=<string>
+     * --scope_type=<products|brand|category>
+     * [--products=<ids>]
+     * [--brand_term_id=<id>]
+     * [--category_term_id=<id>]
+     * [--dry_run=<0|1>]
+     * [--min_margin_percent=<num>]
+     * [--min_margin_abs=<num>]
+     */
+    public function assignment( array $args, array $assoc_args ) : void {
+        $action = $assoc_args['action'] ?? 'create';
+        if ( 'create' !== $action ) {
+            WP_CLI::error( 'Only create supported in this version' );
+        }
+        $name = (string) ( $assoc_args['name'] ?? '' );
+        $scopeType = (string) ( $assoc_args['scope_type'] ?? '' );
+        if ( '' === $name || '' === $scopeType ) {
+            WP_CLI::error( 'name and scope_type required' );
+        }
+        $scope = [ 'type' => $scopeType ];
+        if ( 'products' === $scopeType && isset( $assoc_args['products'] ) ) {
+            $scope['products'] = array_map( 'intval', explode( ',', (string) $assoc_args['products'] ) );
+        }
+        if ( 'brand' === $scopeType && isset( $assoc_args['brand_term_id'] ) ) {
+            $scope['brand_term_id'] = (int) $assoc_args['brand_term_id'];
+        }
+        if ( 'category' === $scopeType && isset( $assoc_args['category_term_id'] ) ) {
+            $scope['category_term_id'] = (int) $assoc_args['category_term_id'];
+        }
+
+        $rule = [
+            'dry_run'            => isset( $assoc_args['dry_run'] ) ? (bool) $assoc_args['dry_run'] : true,
+            'min_margin_percent' => isset( $assoc_args['min_margin_percent'] ) ? (float) $assoc_args['min_margin_percent'] : 0.0,
+            'min_margin_abs'     => isset( $assoc_args['min_margin_abs'] ) ? (float) $assoc_args['min_margin_abs'] : 0.0,
+        ];
+
+        $repo = new RepriceAssignmentRepository();
+        $id = $repo->create( [
+            'name'       => $name,
+            'scope_type' => $scopeType,
+            'scope_json' => $scope,
+            'rule_json'  => $rule,
+        ] );
+        if ( $id <= 0 ) {
+            WP_CLI::error( 'Unable to create assignment' );
+        }
+        WP_CLI::success( sprintf( 'assignment_id=%d', $id ) );
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function create_run_row( array $payload ) : int {
+        global $wpdb;
+        $table = $wpdb->prefix . 'aurora_ops_runs';
+        $now   = current_time( 'mysql', true );
+        $ok = $wpdb->insert(
+            $table,
+            [
+                'op_key'       => 'repricer_run',
+                'action_type'  => 'repricer_run',
+                'indexer'      => null,
+                'status'       => 'requested',
+                'requested_at' => $now,
+                'started_at'   => null,
+                'finished_at'  => null,
+                'message'      => null,
+                'error'        => null,
+                'meta_json'    => wp_json_encode( $payload ),
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ]
+        );
+        if ( false === $ok ) {
+            WP_CLI::error( 'Unable to create ops run row.' );
+        }
+        return (int) $wpdb->insert_id;
     }
 }

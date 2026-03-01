@@ -5,6 +5,8 @@ namespace Aurora\Enterprise\Repricer;
 
 use Aurora\Enterprise\Ops\Ops_Run_Manager;
 use Aurora\Enterprise\Support\Logger;
+use Aurora\Enterprise\Repricer\RepriceScopeResolver;
+use Aurora\Enterprise\Repricer\RepriceAssignmentRepository;
 use wpdb;
 
 class RepriceRunManager {
@@ -12,13 +14,17 @@ class RepriceRunManager {
     private Logger $logger;
     private RepriceChunkProcessor $chunks;
     private RepriceLockManager $lock;
+    private RepriceScopeResolver $resolver;
+    private RepriceAssignmentRepository $assignments;
     private wpdb $db;
 
-    public function __construct( ?RepriceChunkProcessor $chunks = null, ?RepriceLockManager $lock = null ) {
+    public function __construct( ?RepriceChunkProcessor $chunks = null, ?RepriceLockManager $lock = null, ?RepriceScopeResolver $resolver = null, ?RepriceAssignmentRepository $assignments = null ) {
         $this->runs   = Ops_Run_Manager::instance();
         $this->logger = new Logger();
         $this->chunks = $chunks ?? new RepriceChunkProcessor();
         $this->lock   = $lock ?? new RepriceLockManager();
+        $this->resolver = $resolver ?? new RepriceScopeResolver();
+        $this->assignments = $assignments ?? new RepriceAssignmentRepository();
         global $wpdb;
         $this->db = $wpdb;
     }
@@ -31,6 +37,20 @@ class RepriceRunManager {
         $owner  = wp_generate_uuid4();
         $startedAt = microtime( true );
         $this->logger->info( 'repricer', 'repricer start', [ 'run_id' => $runId, 'payload' => $config ] );
+
+        $scope = $payload['scope'] ?? null;
+        if ( isset( $payload['assignment_id'] ) ) {
+            $assignment = $this->assignments->get( (int) $payload['assignment_id'] );
+            if ( ! $assignment ) {
+                $this->runs->mark_error( $runId, 'Assignment not found' );
+                return;
+            }
+            $assignmentScope = json_decode( (string) ( $assignment['scope_json'] ?? '{}' ), true ) ?: [];
+            $assignmentRule  = json_decode( (string) ( $assignment['rule_json'] ?? '{}' ), true ) ?: [];
+            $scope = $scope ?? $assignmentScope;
+            $config = array_merge( $assignmentRule, $config );
+            $config['assignment_id'] = (int) $assignment['id'];
+        }
 
         if ( ! $this->lock->acquire( $owner ) ) {
             $this->handle_lock_busy( $runId, $payload );
@@ -82,7 +102,11 @@ class RepriceRunManager {
             }
 
             $limit = min( $chunkSize, $remaining );
-            $ids   = $this->chunks->fetch_next_ids( $lastId, $limit );
+            if ( $scope ) {
+                $ids = $this->resolver->select_product_ids( $scope, $limit, $lastId );
+            } else {
+                $ids = $this->chunks->fetch_next_ids( $lastId, $limit );
+            }
             if ( empty( $ids ) ) {
                 $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt );
                 return;

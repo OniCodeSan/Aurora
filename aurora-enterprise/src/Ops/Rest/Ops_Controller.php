@@ -4,6 +4,7 @@ namespace Aurora\Enterprise\Ops\Rest;
 use Aurora\Enterprise\Ops\System_Status_Provider;
 use Aurora\Enterprise\Ops\Ops_Run_Manager;
 use Aurora\Enterprise\Ops\Ops_Dispatcher;
+use Aurora\Enterprise\Repricer\RepriceAssignmentRepository;
 use WP_REST_Server;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -118,6 +119,24 @@ class Ops_Controller {
             'callback'            => [ $this, 'repricer_run' ],
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/assignments', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_assignments_create' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/assignments', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'repricer_assignments_list' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/assignments/(?P<id>\\d+)', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'repricer_assignments_get' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
     }
 
     public function get_status() : WP_REST_Response {
@@ -133,6 +152,7 @@ class Ops_Controller {
             return new WP_Error( 'aurora_ops_repricer_busy', 'Repricer run already in progress', [ 'status' => 409, 'run_id' => (int) $existing ] );
         }
 
+        $assignment_id = (int) ( $request['assignment_id'] ?? 0 );
         $payload = [
             'max_products'       => (int) ( $request['max_products'] ?? 10000 ),
             'chunk_size'         => (int) ( $request['chunk_size'] ?? 500 ),
@@ -141,6 +161,9 @@ class Ops_Controller {
             'min_margin_abs'     => isset( $request['min_margin_abs'] ) ? (float) $request['min_margin_abs'] : 0.0,
             'dry_run'            => array_key_exists( 'dry_run', $request->get_json_params() ?? [] ) ? (bool) $request['dry_run'] : true,
         ];
+        if ( $assignment_id > 0 ) {
+            $payload['assignment_id'] = $assignment_id;
+        }
 
         $now = current_time( 'mysql', true );
         $inserted = $wpdb->insert(
@@ -185,6 +208,40 @@ class Ops_Controller {
         }
 
         return new WP_Error( 'aurora_ops_schedule_failed', 'Failed to schedule repricer run.', [ 'status' => 500 ] );
+    }
+
+    public function repricer_assignments_create( WP_REST_Request $request ) {
+        $repo = new RepriceAssignmentRepository();
+        $id = $repo->create( [
+            'name'       => (string) $request['name'],
+            'enabled'    => isset( $request['enabled'] ) ? (int) $request['enabled'] : 1,
+            'scope_type' => (string) $request['scope_type'],
+            'scope_json' => $request['scope'] ?? [],
+            'rule_json'  => $request['rule'] ?? [],
+        ] );
+        if ( $id <= 0 ) {
+            return new WP_Error( 'aurora_repricer_assignment_create_failed', 'Unable to create assignment', [ 'status' => 500 ] );
+        }
+        return [ 'ok' => true, 'assignment_id' => $id ];
+    }
+
+    public function repricer_assignments_list( WP_REST_Request $request ) {
+        $repo = new RepriceAssignmentRepository();
+        $limit = (int) ( $request['limit'] ?? 50 );
+        $offset = (int) ( $request['offset'] ?? 0 );
+        return [
+            'items' => $repo->list( $limit, $offset ),
+        ];
+    }
+
+    public function repricer_assignments_get( WP_REST_Request $request ) {
+        $repo = new RepriceAssignmentRepository();
+        $id = (int) $request['id'];
+        $row = $repo->get( $id );
+        if ( ! $row ) {
+            return new WP_Error( 'aurora_repricer_assignment_not_found', 'Assignment not found', [ 'status' => 404 ] );
+        }
+        return $row;
     }
 
     public function trigger_rebuild( WP_REST_Request $request ) {
