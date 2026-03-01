@@ -225,6 +225,7 @@ class Ops_Executor {
             'min_margin_abs'     => 'min_margin_abs',
             'dryRun'             => 'dry_run',
             'dry_run'            => 'dry_run',
+            'mode'               => 'mode',
         ];
 
         $normalized = [];
@@ -241,6 +242,7 @@ class Ops_Executor {
             'min_margin_percent' => isset( $normalized['min_margin_percent'] ) ? (float) $normalized['min_margin_percent'] : 0.0,
             'min_margin_abs'     => isset( $normalized['min_margin_abs'] ) ? (float) $normalized['min_margin_abs'] : 0.0,
             'dry_run'            => array_key_exists( 'dry_run', $normalized ) ? (bool) $normalized['dry_run'] : true,
+            'mode'               => isset( $normalized['mode'] ) ? (string) $normalized['mode'] : 'dry_run',
         ];
     }
 }

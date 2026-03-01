@@ -111,6 +111,9 @@ class Repricer_Command extends WP_CLI_Command {
      * --assignment=<id>
      * [--timebox_seconds=<int>]
      * [--chunk=<int>]
+     * [--mode=<dry_run|apply>]
+     * [--min_margin_percent=<num>]
+     * [--min_margin_abs=<num>]
      */
     public function run( array $args, array $assoc_args ) : void {
         $assignmentId = isset( $assoc_args['assignment'] ) ? (int) $assoc_args['assignment'] : 0;
@@ -122,7 +125,10 @@ class Repricer_Command extends WP_CLI_Command {
             'assignment_id'   => $assignmentId,
             'timebox_seconds' => isset( $assoc_args['timebox_seconds'] ) ? (int) $assoc_args['timebox_seconds'] : 90,
             'chunk_size'      => isset( $assoc_args['chunk'] ) ? (int) $assoc_args['chunk'] : 500,
-            'dry_run'         => true,
+            'mode'            => isset( $assoc_args['mode'] ) ? (string) $assoc_args['mode'] : 'dry_run',
+            'dry_run'         => isset( $assoc_args['mode'] ) ? ( (string) $assoc_args['mode'] === 'dry_run' ) : true,
+            'min_margin_percent' => isset( $assoc_args['min_margin_percent'] ) ? (float) $assoc_args['min_margin_percent'] : 0.0,
+            'min_margin_abs'     => isset( $assoc_args['min_margin_abs'] ) ? (float) $assoc_args['min_margin_abs'] : 0.0,
         ];
         $run_id = $this->create_run_row( $payload );
         $manager = new RepriceRunManager();

@@ -160,6 +160,7 @@ class Ops_Controller {
             'min_margin_percent' => isset( $request['min_margin_percent'] ) ? (float) $request['min_margin_percent'] : 0.0,
             'min_margin_abs'     => isset( $request['min_margin_abs'] ) ? (float) $request['min_margin_abs'] : 0.0,
             'dry_run'            => array_key_exists( 'dry_run', $request->get_json_params() ?? [] ) ? (bool) $request['dry_run'] : true,
+            'mode'               => (string) ( $request['mode'] ?? ( ( array_key_exists( 'dry_run', $request->get_json_params() ?? [] ) && ! $request['dry_run'] ) ? 'apply' : 'dry_run' ) ),
         ];
         if ( $assignment_id > 0 ) {
             $payload['assignment_id'] = $assignment_id;

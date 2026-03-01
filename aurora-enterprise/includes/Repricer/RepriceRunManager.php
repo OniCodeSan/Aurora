@@ -76,6 +76,7 @@ class RepriceRunManager {
         ];
         $decisionsWritten = 0;
         $selected = 0;
+        $appliedCount = 0;
 
         $timebox   = (int) $config['timebox_seconds'];
         $memGuard  = (float) $config['memory_guard_ratio'];
@@ -97,7 +98,7 @@ class RepriceRunManager {
 
             $remaining = $max - $processed;
             if ( $remaining <= 0 ) {
-                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt );
+                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt, $config );
                 return;
             }
 
@@ -108,7 +109,7 @@ class RepriceRunManager {
                 $ids = $this->chunks->fetch_next_ids( $lastId, $limit );
             }
             if ( empty( $ids ) ) {
-                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt );
+                $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt, $config );
                 return;
             }
             $selected += count( $ids );
@@ -117,12 +118,19 @@ class RepriceRunManager {
                 $decision = $this->decide( $productId, $config );
                 $decision['run_id']     = $runId;
                 $decision['created_at'] = current_time( 'mysql', true );
+                $applyResult = $this->maybe_apply( $productId, $decision, $config );
+                if ( $applyResult['error'] ) {
+                    $this->fail_run( $runId, $owner, $applyResult['error'], $counters, $processed, $updated, $selected, $decisionsWritten, microtime( true ) - $startedAt );
+                    return;
+                }
+                $decision = $applyResult['decision'];
                 if ( $this->insert_decision( $decision ) ) {
                     $decisionsWritten++;
                     $processed++;
                     $counters[ $decision['rule_applied'] ] = ( $counters[ $decision['rule_applied'] ] ?? 0 ) + 1;
-                    if ( 'floor_margin' === $decision['rule_applied'] ) {
+                    if ( (int) $decision['applied'] === 1 ) {
                         $updated++;
+                        $appliedCount++;
                     }
                 }
                 $lastId = $productId;
@@ -147,6 +155,8 @@ class RepriceRunManager {
             'min_margin_abs'     => isset( $payload['min_margin_abs'] ) ? (float) $payload['min_margin_abs'] : 1.0,
             'timebox_seconds'    => isset( $payload['timebox_seconds'] ) ? max( 1, (int) $payload['timebox_seconds'] ) : 90,
             'memory_guard_ratio' => isset( $payload['memory_guard_ratio'] ) ? (float) $payload['memory_guard_ratio'] : 0.70,
+            'mode'               => isset( $payload['mode'] ) ? (string) $payload['mode'] : ( ( isset( $payload['dry_run'] ) && false === (bool) $payload['dry_run'] ) ? 'apply' : 'dry_run' ),
+            'assignment_id'      => isset( $payload['assignment_id'] ) ? (int) $payload['assignment_id'] : null,
         ];
     }
 
@@ -215,7 +225,7 @@ class RepriceRunManager {
         $this->reschedule( $runId, $payload );
     }
 
-    private function complete( int $runId, string $owner, int $processed, int $updated, array $counters, int $selected, int $decisionsWritten, float $startedAt ) : void {
+    private function complete( int $runId, string $owner, int $processed, int $updated, array $counters, int $selected, int $decisionsWritten, float $startedAt, array $config ) : void {
         $duration = microtime( true ) - $startedAt;
         if ( $selected <= 0 ) {
             $this->fail_run( $runId, $owner, 'No products selected', $counters, $processed, $updated, $selected, $decisionsWritten, $duration );
@@ -232,7 +242,7 @@ class RepriceRunManager {
             'updated_count'   => $updated,
         ] );
         $summary = [
-            'message'   => 'repricer completed',
+            'message'   => $updated > 0 ? 'repricer completed' : 'repricer completed (no changes)',
             'processed' => $processed,
             'updated'   => $updated,
             'selected'  => $selected,
@@ -240,6 +250,7 @@ class RepriceRunManager {
             'duration'  => $duration,
             'peak_mem'  => memory_get_peak_usage( true ),
             'counters'  => $counters,
+            'mode'      => $config['mode'] ?? 'dry_run',
         ];
         $this->runs->mark_success( $runId, $summary );
         $this->logger->info( 'repricer', 'repricer complete', [ 'run_id' => $runId ] + $summary );
@@ -305,6 +316,11 @@ class RepriceRunManager {
             'rule_applied'  => $rule,
             'reason'        => $reason,
             'applied'       => 0,
+            'applied_at_utc'=> null,
+            'old_price_applied_from' => null,
+            'new_price_applied_to'   => null,
+            'rollback_status'        => null,
+            'rolled_back_at_utc'     => null,
         ];
     }
 
@@ -326,6 +342,11 @@ class RepriceRunManager {
                 'rule_applied'  => $data['rule_applied'],
                 'reason'        => $data['reason'],
                 'applied'       => $data['applied'],
+                'applied_at_utc'=> $data['applied_at_utc'],
+                'old_price_applied_from' => $data['old_price_applied_from'],
+                'new_price_applied_to'   => $data['new_price_applied_to'],
+                'rollback_status'        => $data['rollback_status'],
+                'rolled_back_at_utc'     => $data['rolled_back_at_utc'],
                 'created_at'    => $data['created_at'],
             ],
             [
@@ -343,9 +364,48 @@ class RepriceRunManager {
                 '%s',
                 '%d',
                 '%s',
+                '%f',
+                '%f',
+                '%s',
+                '%s',
+                '%s',
             ]
         );
         return false !== $inserted;
+    }
+
+    /**
+     * @param array<string,mixed> $decision
+     * @param array<string,mixed> $config
+     * @return array{decision:array<string,mixed>, error:?string}
+     */
+    private function maybe_apply( int $productId, array $decision, array $config ) : array {
+        $mode = (string) ( $config['mode'] ?? 'dry_run' );
+        $shouldApply = 'apply' === $mode
+            && in_array( $decision['rule_applied'], [ 'floor_margin' ], true )
+            && $decision['new_price'] !== null
+            && $decision['old_price'] !== null
+            && (float) $decision['new_price'] !== (float) $decision['old_price'];
+
+        if ( ! $shouldApply ) {
+            return [ 'decision' => $decision, 'error' => null ];
+        }
+
+        $old = (float) $decision['old_price'];
+        $new = (float) $decision['new_price'];
+
+        $ok1 = update_post_meta( $productId, '_price', $new );
+        $ok2 = update_post_meta( $productId, '_regular_price', $new );
+        if ( false === $ok1 || false === $ok2 ) {
+            return [ 'decision' => $decision, 'error' => 'Failed applying price' ];
+        }
+
+        $decision['applied'] = 1;
+        $decision['applied_at_utc'] = gmdate( 'Y-m-d H:i:s' );
+        $decision['old_price_applied_from'] = $old;
+        $decision['new_price_applied_to']   = $new;
+
+        return [ 'decision' => $decision, 'error' => null ];
     }
 
     private function memory_guard_triggered( float $ratio ) : bool {
