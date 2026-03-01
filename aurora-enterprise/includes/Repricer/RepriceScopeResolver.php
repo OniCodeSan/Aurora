@@ -29,7 +29,13 @@ class RepriceScopeResolver {
             $limit = min( $limit, $filtersLimit );
         }
 
-        $type = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
+        $rawType = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
+        $type = strtolower( trim( $rawType ) );
+        if ( $type === 'product' ) {
+            $type = 'products';
+        } elseif ( $type === 'category' || $type === 'categories' ) {
+            $type = 'product_cat';
+        }
         switch ( $type ) {
             case 'products':
                 return $this->by_products_list( $scope, $filters, $limit, $after_id );

@@ -42,8 +42,8 @@ class RepriceRunManager {
         $filters = $payload['filters'] ?? [];
         if ( isset( $payload['assignment_id'] ) ) {
             $assignment = $this->assignments->get( (int) $payload['assignment_id'] );
-            if ( ! $assignment ) {
-                $this->runs->mark_error( $runId, 'Assignment not found' );
+            if ( ! $assignment || (int) ( $assignment['is_enabled'] ?? 0 ) !== 1 ) {
+                $this->runs->mark_error( $runId, 'Assignment not found or disabled' );
                 return;
             }
             $assignmentScope = json_decode( (string) ( $assignment['scope_json'] ?? '{}' ), true ) ?: [];
@@ -53,6 +53,12 @@ class RepriceRunManager {
             $filters = array_merge( $assignmentFilters, $filters );
             $config = array_merge( $assignmentRule, $config );
             $config['assignment_id'] = (int) $assignment['id'];
+            $scopeType = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
+            if ( '' === trim( $scopeType ) ) {
+                $this->runs->mark_error( $runId, 'Invalid scope_type' );
+                return;
+            }
+            $this->logger->info( 'repricer', 'assignment resolved', [ 'run_id' => $runId, 'assignment_id' => $assignment['id'], 'scope_type' => $scopeType ] );
         }
 
         if ( ! $this->lock->acquire( $owner ) ) {
