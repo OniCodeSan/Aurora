@@ -13,6 +13,9 @@ use Aurora\Enterprise\Feed\FeedLockManager;
 use Aurora\Enterprise\Feed\FeedChunkProcessor;
 use Aurora\Enterprise\Feed\FeedValidator;
 use Aurora\Enterprise\Feed\FeedRunManager;
+use Aurora\Enterprise\Repricer\RepriceLockManager;
+use Aurora\Enterprise\Repricer\RepriceChunkProcessor;
+use Aurora\Enterprise\Repricer\RepriceRunManager;
 
 class Ops_Executor {
     /**
@@ -29,6 +32,8 @@ class Ops_Executor {
                 return $this->execute_feed_enqueue( $payload );
             case 'feed_run':
                 return $this->execute_feed_run( $payload );
+            case 'repricer_run':
+                return $this->execute_repricer_run( $payload );
             default:
                 throw new \RuntimeException( 'Unsupported op key: ' . $opKey );
         }
@@ -174,6 +179,26 @@ class Ops_Executor {
         $result = $manager->start( $runId );
         return [
             'message' => $result['status'] ?? 'feed_run',
+            'run_id'  => $runId,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function execute_repricer_run( array $payload ) : array {
+        $runId = (int) ( $payload['run_id'] ?? 0 );
+        if ( $runId <= 0 ) {
+            throw new \RuntimeException( 'Missing run_id for repricer_run' );
+        }
+        $manager = new RepriceRunManager(
+            new RepriceChunkProcessor(),
+            new RepriceLockManager()
+        );
+        $manager->start( $runId, $payload );
+        return [
+            'message' => 'repricer_run',
             'run_id'  => $runId,
         ];
     }

@@ -141,6 +141,41 @@ class Installer {
             KEY indexer_level (indexer, level)
         ) {$charset};";
 
+        $schema[] = "CREATE TABLE {$prefix}aurora_reprice_decisions (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            run_id BIGINT UNSIGNED NOT NULL,
+            product_id BIGINT UNSIGNED NOT NULL,
+            variation_id BIGINT UNSIGNED NULL,
+            sku VARCHAR(64) NULL,
+            currency VARCHAR(8) NOT NULL DEFAULT 'EUR',
+            old_price DECIMAL(12,4) NULL,
+            new_price DECIMAL(12,4) NULL,
+            cost DECIMAL(12,4) NULL,
+            margin_before DECIMAL(8,4) NULL,
+            margin_after DECIMAL(8,4) NULL,
+            rule_applied VARCHAR(64) NOT NULL,
+            reason TEXT NULL,
+            applied TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY idx_run_id (run_id),
+            KEY idx_product (product_id),
+            UNIQUE KEY uniq_run_product (run_id, product_id, variation_id)
+        ) {$charset};";
+
+        $schema[] = "CREATE TABLE {$prefix}aurora_reprice_progress (
+            run_id BIGINT UNSIGNED NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            last_product_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            processed_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            updated_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            started_at DATETIME NULL,
+            updated_at DATETIME NULL,
+            PRIMARY KEY (run_id),
+            KEY status_updated (status, updated_at),
+            KEY last_product (last_product_id)
+        ) {$charset};";
+
         $schema[] = "CREATE TABLE {$prefix}aurora_snapshot_versions (
             table_name VARCHAR(64) NOT NULL,
             current_version BIGINT UNSIGNED NOT NULL DEFAULT 1,

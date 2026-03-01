@@ -6,7 +6,7 @@ use WP_Error;
 class Ops_Run_Manager {
     private const TABLE = 'aurora_ops_runs';
     private const STATUS_CACHE_KEY = 'aurora_system_status';
-    private const SUPPORTED_OPS = [ 'rebuild', 'sweep_leases', 'feed_enqueue', 'feed_run' ];
+    private const SUPPORTED_OPS = [ 'rebuild', 'sweep_leases', 'feed_enqueue', 'feed_run', 'repricer_run' ];
     private static ?Ops_Run_Manager $instance = null;
 
     public static function instance() : Ops_Run_Manager {
@@ -67,8 +67,12 @@ class Ops_Run_Manager {
         $now   = current_time( 'mysql', true );
         $updated = $wpdb->query(
             $wpdb->prepare(
-                "UPDATE {$table} SET status = 'running', started_at = %s, updated_at = %s WHERE id = %d AND status = 'requested'",
-                $now, $now, $runId
+                "UPDATE {$table}
+                    SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s
+                  WHERE id = %d AND status IN ('requested','partial')",
+                $now,
+                $now,
+                $runId
             )
         );
         $this->invalidate_status_cache();
