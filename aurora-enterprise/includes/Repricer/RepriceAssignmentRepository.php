@@ -19,7 +19,11 @@ class RepriceAssignmentRepository {
      * @param array<string,mixed> $data
      */
     public function create( array $data ) : int {
-        $now = current_time( 'mysql', true );
+        $now      = current_time( 'mysql', true );
+        $scope    = $this->normalize_array_input( $data['scope_json'] ?? [] );
+        $filters  = $this->normalize_array_input( $data['filters_json'] ?? [] );
+        $rule     = $this->normalize_array_input( $data['rule_json'] ?? [] );
+        $schedule = $this->normalize_array_input( $data['schedule_json'] ?? [] );
         $inserted = $this->db->insert(
             $this->table,
             [
@@ -27,10 +31,10 @@ class RepriceAssignmentRepository {
                 'is_enabled'   => isset( $data['is_enabled'] ) ? (int) $data['is_enabled'] : ( isset( $data['enabled'] ) ? (int) $data['enabled'] : 1 ),
                 'priority'     => isset( $data['priority'] ) ? (int) $data['priority'] : 100,
                 'scope_type'   => (string) ( $data['scope_type'] ?? '' ),
-                'scope_json'   => wp_json_encode( $data['scope_json'] ?? [] ),
-                'filters_json' => wp_json_encode( $data['filters_json'] ?? [] ),
-                'rule_json'    => wp_json_encode( $data['rule_json'] ?? [] ),
-                'schedule_json'=> isset( $data['schedule_json'] ) ? wp_json_encode( $data['schedule_json'] ) : null,
+                'scope_json'   => wp_json_encode( $scope ),
+                'filters_json' => wp_json_encode( $filters ),
+                'rule_json'    => wp_json_encode( $rule ),
+                'schedule_json'=> ! empty( $schedule ) ? wp_json_encode( $schedule ) : null,
                 'last_run_id'  => isset( $data['last_run_id'] ) ? (int) $data['last_run_id'] : null,
                 'created_at'   => $now,
                 'updated_at'   => $now,
@@ -104,6 +108,23 @@ class RepriceAssignmentRepository {
      * @return array<string,mixed>
      */
     private function decode_json_array( $value ) : array {
+        if ( is_array( $value ) ) {
+            return $value;
+        }
+        if ( is_string( $value ) && $value !== '' ) {
+            $decoded = json_decode( $value, true );
+            if ( is_array( $decoded ) ) {
+                return $decoded;
+            }
+        }
+        return [];
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<string,mixed>
+     */
+    private function normalize_array_input( $value ) : array {
         if ( is_array( $value ) ) {
             return $value;
         }
