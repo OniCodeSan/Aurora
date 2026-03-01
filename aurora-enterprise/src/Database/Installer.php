@@ -185,17 +185,21 @@ class Installer {
         $schema[] = "CREATE TABLE {$prefix}aurora_reprice_assignments (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             name VARCHAR(190) NOT NULL,
-            enabled TINYINT(1) NOT NULL DEFAULT 1,
+            is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+            priority INT NOT NULL DEFAULT 100,
             scope_type VARCHAR(50) NOT NULL,
             scope_json LONGTEXT NOT NULL,
+            filters_json LONGTEXT NOT NULL DEFAULT '{}',
             rule_json LONGTEXT NOT NULL,
+            schedule_json LONGTEXT NULL,
             last_run_id BIGINT UNSIGNED NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (id),
-            KEY enabled (enabled),
+            KEY enabled (is_enabled),
             KEY scope_type (scope_type),
-            KEY last_run_id (last_run_id)
+            KEY last_run_id (last_run_id),
+            KEY priority (priority)
         ) {$charset};";
 
         $schema[] = "CREATE TABLE {$prefix}aurora_snapshot_versions (

@@ -23,14 +23,17 @@ class RepriceAssignmentRepository {
         $inserted = $this->db->insert(
             $this->table,
             [
-                'name'        => (string) ( $data['name'] ?? '' ),
-                'enabled'     => isset( $data['enabled'] ) ? (int) $data['enabled'] : 1,
-                'scope_type'  => (string) ( $data['scope_type'] ?? '' ),
-                'scope_json'  => wp_json_encode( $data['scope_json'] ?? [] ),
-                'rule_json'   => wp_json_encode( $data['rule_json'] ?? [] ),
-                'last_run_id' => isset( $data['last_run_id'] ) ? (int) $data['last_run_id'] : null,
-                'created_at'  => $now,
-                'updated_at'  => $now,
+                'name'         => (string) ( $data['name'] ?? '' ),
+                'is_enabled'   => isset( $data['is_enabled'] ) ? (int) $data['is_enabled'] : ( isset( $data['enabled'] ) ? (int) $data['enabled'] : 1 ),
+                'priority'     => isset( $data['priority'] ) ? (int) $data['priority'] : 100,
+                'scope_type'   => (string) ( $data['scope_type'] ?? '' ),
+                'scope_json'   => wp_json_encode( $data['scope_json'] ?? [] ),
+                'filters_json' => wp_json_encode( $data['filters_json'] ?? [] ),
+                'rule_json'    => wp_json_encode( $data['rule_json'] ?? [] ),
+                'schedule_json'=> isset( $data['schedule_json'] ) ? wp_json_encode( $data['schedule_json'] ) : null,
+                'last_run_id'  => isset( $data['last_run_id'] ) ? (int) $data['last_run_id'] : null,
+                'created_at'   => $now,
+                'updated_at'   => $now,
             ]
         );
         return false === $inserted ? 0 : (int) $this->db->insert_id;
@@ -71,7 +74,7 @@ class RepriceAssignmentRepository {
     }
 
     public function count_enabled() : int {
-        return (int) $this->db->get_var( "SELECT COUNT(*) FROM {$this->table} WHERE enabled = 1" );
+        return (int) $this->db->get_var( "SELECT COUNT(*) FROM {$this->table} WHERE is_enabled = 1" );
     }
 
     public function last_assignment() : ?array {
