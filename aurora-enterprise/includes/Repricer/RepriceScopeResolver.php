@@ -53,6 +53,9 @@ class RepriceScopeResolver {
         $ids = array_filter( $ids, static fn( $v ) => $v > $after_id );
         sort( $ids, SORT_NUMERIC );
         $ids = $this->apply_excludes_array( $ids, $filters, $scope );
+        if ( empty( $ids ) ) {
+            return [];
+        }
         $ids = $this->filter_require_price( $ids, $filters );
         $ids = $this->filter_require_cost( $ids, $filters );
         $ids = $this->apply_price_bounds( $ids, $filters );
@@ -128,6 +131,9 @@ class RepriceScopeResolver {
         $ids = $ids ?: [];
         $ids = array_map( 'intval', $ids );
         $ids = $this->apply_excludes_array( $ids, $filters, $scope );
+        if ( empty( $ids ) ) {
+            return [];
+        }
         $ids = $this->filter_require_price( $ids, $filters );
         $ids = $this->filter_require_cost( $ids, $filters );
         $ids = $this->apply_price_bounds( $ids, $filters );
