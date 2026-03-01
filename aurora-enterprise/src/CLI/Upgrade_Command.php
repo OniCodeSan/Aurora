@@ -58,6 +58,7 @@ class Upgrade_Schema {
         $this->ensureCheckpointTable();
         $this->ensureRepriceDecisions();
         $this->ensureRepriceAssignments();
+        $this->ensureRepriceProgress();
     }
 
     private function ensureSnapshotTables() : void {
@@ -293,6 +294,28 @@ class Upgrade_Schema {
         ) {$charset};";
         dbDelta( $sql );
         WP_CLI::log( 'Ensured repricer assignments schema' );
+    }
+
+    private function ensureRepriceProgress() : void {
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        $table = $this->prefix . 'aurora_reprice_progress';
+        $charset = $this->db->get_charset_collate();
+        $sql = "CREATE TABLE {$table} (
+            run_id BIGINT UNSIGNED NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            last_product_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            processed_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            updated_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            selected_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            decisions_written BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            started_at DATETIME NULL,
+            updated_at DATETIME NULL,
+            PRIMARY KEY (run_id),
+            KEY status_updated (status, updated_at),
+            KEY last_product (last_product_id)
+        ) {$charset};";
+        dbDelta( $sql );
+        WP_CLI::log( 'Ensured repricer progress schema' );
     }
 }
 

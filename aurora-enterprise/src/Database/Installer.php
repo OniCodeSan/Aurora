@@ -175,6 +175,8 @@ class Installer {
             last_product_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             processed_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
             updated_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            selected_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            decisions_written BIGINT UNSIGNED NOT NULL DEFAULT 0,
             started_at DATETIME NULL,
             updated_at DATETIME NULL,
             PRIMARY KEY (run_id),
