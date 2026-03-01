@@ -31,6 +31,7 @@
     const lastRunHtml = lastRun
       ? `<div><strong>ID:</strong> ${lastRun.id}</div>
          <div><strong>Status:</strong> ${badge(lastRun.status)}</div>
+         <div><strong>Mode:</strong> ${lastRun.mode || '-'}</div>
          <div><strong>Message:</strong> ${lastRun.message || "-"}</div>
          <div><strong>Error:</strong> ${lastRun.error || "-"}</div>
          <div><strong>Requested:</strong> ${lastRun.requested_at || "-"}</div>
@@ -71,10 +72,12 @@
           <h3>Decisions</h3>
           <div><strong>Totale:</strong> ${decisions.decisions_count ?? 0}</div>
           <div><strong>Prodotti unici:</strong> ${decisions.distinct_products ?? 0}</div>
-          <table class="aurora-table" aria-label="Repricer breakdown">
-            <thead><tr><th>Rule</th><th>Count</th></tr></thead>
-            <tbody>${breakdown || '<tr><td colspan="2" class="aurora-muted">N/A</td></tr>'}</tbody>
-          </table>
+          <div><strong>Applied:</strong> ${decisions.applied_count_last_run ?? 0}</div>
+          <div><strong>Rollback pending (last apply run):</strong> ${repr.rollback_pending_count_last_apply_run ?? 0}</div>
+         <table class="aurora-table" aria-label="Repricer breakdown">
+           <thead><tr><th>Rule</th><th>Count</th></tr></thead>
+           <tbody>${breakdown || '<tr><td colspan="2" class="aurora-muted">N/A</td></tr>'}</tbody>
+         </table>
         </div>
       </div>
       <div class="aurora-card">

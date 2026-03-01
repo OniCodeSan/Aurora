@@ -161,7 +161,7 @@ class System_Status_Provider {
         $assignRepo = new \Aurora\Enterprise\Repricer\RepriceAssignmentRepository();
 
         $lastRun = $wpdb->get_row(
-            "SELECT id, op_key, status, message, error, requested_at, started_at, finished_at, updated_at
+            "SELECT id, op_key, status, message, error, requested_at, started_at, finished_at, updated_at, meta_json
              FROM {$tables['runs']}
              WHERE op_key = 'repricer_run'
              ORDER BY id DESC
@@ -187,6 +187,7 @@ class System_Status_Provider {
         $distinctProducts = 0;
         $breakdown = [];
         $recent = [];
+        $appliedCountLastRun = 0;
 
         if ( $lastRun ) {
             $runId = (int) $lastRun['id'];
@@ -226,6 +227,46 @@ class System_Status_Provider {
                 ),
                 ARRAY_A
             ) ?: [];
+
+            $appliedCountLastRun = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$tables['decisions']} WHERE run_id = %d AND applied = 1",
+                    $runId
+                )
+            );
+        }
+
+        $lastApplyRun = $wpdb->get_row(
+            "SELECT run_id, COUNT(*) as applied_count
+             FROM {$tables['decisions']}
+             WHERE applied = 1
+             GROUP BY run_id
+             ORDER BY run_id DESC
+             LIMIT 1",
+            ARRAY_A
+        );
+        $lastApplyRun = is_array( $lastApplyRun ) ? $lastApplyRun : null;
+        $rollbackPending = 0;
+        if ( $lastApplyRun ) {
+            $rollbackPending = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$tables['decisions']}
+                     WHERE run_id = %d AND applied = 1 AND (rollback_status IS NULL OR rollback_status != 'rolled_back')",
+                    (int) $lastApplyRun['run_id']
+                )
+            );
+        }
+
+        $mode = 'dry_run';
+        if ( $lastRun && ! empty( $lastRun['meta_json'] ) ) {
+            $meta = json_decode( (string) $lastRun['meta_json'], true );
+            if ( is_array( $meta ) && isset( $meta['mode'] ) ) {
+                $mode = (string) $meta['mode'];
+            }
+        }
+        if ( $lastRun ) {
+            $lastRun['mode'] = $mode;
+            unset( $lastRun['meta_json'] );
         }
 
         return [
@@ -236,10 +277,13 @@ class System_Status_Provider {
                 'decisions_count'   => $decisionsCount,
                 'distinct_products' => $distinctProducts,
                 'breakdown'         => $breakdown,
+                'applied_count_last_run' => $appliedCountLastRun,
             ],
             'recent_decisions'  => $recent,
             'assignments_count' => $assignRepo->count_enabled(),
             'last_assignment'   => $assignRepo->last_assignment(),
+            'last_apply_run'    => $lastApplyRun,
+            'rollback_pending_count_last_apply_run' => $rollbackPending,
         ];
     }
 }

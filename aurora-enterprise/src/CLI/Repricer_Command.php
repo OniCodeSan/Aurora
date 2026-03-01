@@ -191,6 +191,64 @@ class Repricer_Command extends WP_CLI_Command {
     }
 
     /**
+     * Rollback applied decisions for a run.
+     *
+     * ## OPTIONS
+     * --run=<id>
+     * [--limit=<int>]
+     * [--dry_run=<0|1>]
+     */
+    public function rollback( array $args, array $assoc_args ) : void {
+        $runId = isset( $assoc_args['run'] ) ? (int) $assoc_args['run'] : 0;
+        if ( $runId <= 0 ) {
+            WP_CLI::error( 'run id required' );
+        }
+        $limit = isset( $assoc_args['limit'] ) ? max( 1, (int) $assoc_args['limit'] ) : 100;
+        $dry   = isset( $assoc_args['dry_run'] ) ? (bool) $assoc_args['dry_run'] : false;
+        global $wpdb;
+        $table = $wpdb->prefix . 'aurora_reprice_decisions';
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, product_id, old_price_applied_from
+                 FROM {$table}
+                 WHERE run_id = %d AND applied = 1 AND (rollback_status IS NULL OR rollback_status != 'rolled_back')
+                 ORDER BY id ASC
+                 LIMIT %d",
+                $runId,
+                $limit
+            ),
+            ARRAY_A
+        );
+        $selected = count( $rows ?? [] );
+        $rolled = 0;
+        $skipped = 0;
+        $start = microtime( true );
+        foreach ( (array) $rows as $row ) {
+            $pid = (int) $row['product_id'];
+            $old = $row['old_price_applied_from'];
+            if ( null === $old || '' === $old ) {
+                $skipped++;
+                continue;
+            }
+            if ( ! $dry ) {
+                update_post_meta( $pid, '_price', $old );
+                update_post_meta( $pid, '_regular_price', $old );
+                $wpdb->update(
+                    $table,
+                    [
+                        'rollback_status'    => 'rolled_back',
+                        'rolled_back_at_utc' => gmdate( 'Y-m-d H:i:s' ),
+                    ],
+                    [ 'id' => (int) $row['id'] ]
+                );
+            }
+            $rolled++;
+        }
+        $duration = microtime( true ) - $start;
+        WP_CLI::success( sprintf( 'rollback run_id=%d selected=%d rolled=%d skipped=%d dry_run=%s duration=%.2fs', $runId, $selected, $rolled, $skipped, $dry ? 'yes' : 'no', $duration ) );
+    }
+
+    /**
      * @param array<string,mixed> $payload
      */
     private function create_run_row( array $payload ) : int {
