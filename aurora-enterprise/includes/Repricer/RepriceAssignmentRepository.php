@@ -76,6 +76,7 @@ class RepriceAssignmentRepository {
             $row['scope_json']   = $this->decode_json_array( $row['scope_json'] ?? [] );
             $row['filters_json'] = $this->decode_json_array( $row['filters_json'] ?? [] );
             $row['rule_json']    = $this->decode_json_array( $row['rule_json'] ?? [] );
+            $row['schedule_json'] = $this->decode_json_array( $row['schedule_json'] ?? [] );
         }
         return $rows;
     }
@@ -100,6 +101,7 @@ class RepriceAssignmentRepository {
             $row['scope_json']   = $this->decode_json_array( $row['scope_json'] ?? [] );
             $row['filters_json'] = $this->decode_json_array( $row['filters_json'] ?? [] );
             $row['rule_json']    = $this->decode_json_array( $row['rule_json'] ?? [] );
+            $row['schedule_json'] = $this->decode_json_array( $row['schedule_json'] ?? [] );
         }
         return $rows;
     }
