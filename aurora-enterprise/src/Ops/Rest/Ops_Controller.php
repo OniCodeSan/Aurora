@@ -138,6 +138,12 @@ class Ops_Controller {
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
 
+        register_rest_route( 'aurora/v1', '/repricer/scheduler/tick', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_scheduler_tick' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
         register_rest_route( 'aurora/v1', '/repricer/assignments', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'repricer_assignments_create' ],
@@ -498,6 +504,26 @@ class Ops_Controller {
             return new WP_Error( 'aurora_repricer_assignment_not_found', 'Assignment not found', [ 'status' => 404 ] );
         }
         return $row;
+    }
+
+    public function repricer_scheduler_tick( WP_REST_Request $request ) {
+        try {
+            $scheduler = new \Aurora\Enterprise\Repricer\RepriceScheduler();
+            $scheduler->handle_tick();
+            $last = get_option( 'aurora_repricer_tick_last', [] );
+            return new WP_REST_Response( [
+                'ok'                    => 1,
+                'mode'                  => is_array( $last ) ? ( $last['mode'] ?? 'interval' ) : 'interval',
+                'in_window'             => is_array( $last ) ? ( $last['in_window'] ?? null ) : null,
+                'enqueued'              => is_array( $last ) ? (int) ( $last['enqueued'] ?? 0 ) : 0,
+                'skipped'               => is_array( $last ) ? (int) ( $last['skipped'] ?? 0 ) : 0,
+                'skipped_out_of_window' => is_array( $last ) ? (int) ( $last['skipped_out_window'] ?? 0 ) : 0,
+                'cursor'                => is_array( $last ) ? (int) ( $last['cursor'] ?? 0 ) : 0,
+                'last_error'            => is_array( $last ) ? ( $last['error'] ?? null ) : null,
+            ], 200 );
+        } catch ( \Throwable $e ) {
+            return new WP_Error( 'aurora_repricer_scheduler_tick_failed', $e->getMessage(), [ 'status' => 500 ] );
+        }
     }
 
     public function trigger_rebuild( WP_REST_Request $request ) {

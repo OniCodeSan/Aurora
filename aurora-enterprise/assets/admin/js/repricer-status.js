@@ -27,6 +27,7 @@
     const recent = repr.recent_decisions || [];
     const assignments = repr.assignments || [];
     const lastRollback = repr.last_rollback_run || null;
+    const scheduler = repr.scheduler || {};
 
     state.lastRunStatus = lastRun?.status || null;
 
@@ -89,6 +90,19 @@
           <thead><tr><th>Product</th><th>Old</th><th>New</th><th>Rule</th><th>Created</th></tr></thead>
           <tbody>${recentRows || '<tr><td colspan="5" class="aurora-muted">Nessuna decisione</td></tr>'}</tbody>
         </table>
+      </div>
+      <div class="aurora-card">
+        <h3>Scheduler</h3>
+        <div><strong>Mode:</strong> ${scheduler.mode || '-'}</div>
+        <div><strong>In window:</strong> ${scheduler.in_window === null ? 'n/a' : (scheduler.in_window ? 'yes' : 'no')}</div>
+        <div><strong>Cursor:</strong> ${scheduler.cursor ?? 0}</div>
+        <div><strong>Last at:</strong> ${scheduler.last_at || '-'}</div>
+        <div><strong>Enqueued last:</strong> ${scheduler.enqueued_last ?? 0}</div>
+        <div><strong>Skipped last:</strong> ${scheduler.skipped_last ?? 0}</div>
+        <div><strong>Skipped out-of-window last:</strong> ${scheduler.skipped_out_of_window_last ?? 0}</div>
+        <div><strong>Last error:</strong> ${scheduler.last_error || '-'}</div>
+        <button class="button" id="aurora-tick-now">Run scheduler tick now</button>
+        <span id="aurora-tick-result" class="aurora-muted"></span>
       </div>
       <div class="aurora-card">
         <h3>Trigger repricer (dry-run)</h3>
@@ -156,6 +170,7 @@
     bindForm();
     bindAssignments();
     bindRollback(repr);
+    bindScheduler();
   };
 
   const formField = (name, label, value) =>
@@ -266,6 +281,33 @@
           previewPanel.textContent = err?.message || "Run failed";
         }
       });
+    });
+  };
+
+  const bindScheduler = () => {
+    const btn = document.getElementById("aurora-tick-now");
+    const resEl = document.getElementById("aurora-tick-result");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      resEl.textContent = "Running tick…";
+      try {
+        const res = await fetch(`${restBase}repricer/scheduler/tick`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-WP-Nonce": nonce },
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          resEl.textContent = json?.message || `Error ${res.status}`;
+        } else {
+          resEl.textContent = `enqueued=${json.enqueued ?? 0} skipped=${json.skipped ?? 0} oow=${json.skipped_out_of_window ?? 0}`;
+          fetchStatus();
+        }
+      } catch (e) {
+        resEl.textContent = e.message || "Tick failed";
+      } finally {
+        btn.disabled = false;
+      }
     });
   };
 
