@@ -120,6 +120,18 @@ class Ops_Controller {
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
 
+        register_rest_route( 'aurora/v1', '/repricer/run-all', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_run_all' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/preview', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_preview' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
         register_rest_route( 'aurora/v1', '/repricer/assignments', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'repricer_assignments_create' ],
@@ -209,6 +221,113 @@ class Ops_Controller {
         }
 
         return new WP_Error( 'aurora_ops_schedule_failed', 'Failed to schedule repricer run.', [ 'status' => 500 ] );
+    }
+
+    public function repricer_run_all( WP_REST_Request $request ) {
+        global $wpdb;
+        $mode    = (string) ( $request['mode'] ?? 'dry_run' );
+        $timebox = (int) ( $request['timebox_seconds'] ?? 90 );
+        $chunk   = (int) ( $request['chunk_size'] ?? 500 );
+        $max     = (int) ( $request['max_products'] ?? 10000 );
+
+        $repo = new RepriceAssignmentRepository();
+        $assignments = $repo->list_enabled_ordered( 500 );
+        if ( empty( $assignments ) ) {
+            return new WP_REST_Response( [ 'ok' => true, 'total' => 0, 'enqueued' => 0, 'skipped' => 0, 'items' => [] ], 200 );
+        }
+
+        $runsTable = $wpdb->prefix . 'aurora_ops_runs';
+        $now       = current_time( 'mysql', true );
+        $items     = [];
+        $enqueued  = 0;
+        $skipped   = 0;
+        foreach ( $assignments as $assignment ) {
+            $aid = (int) $assignment['id'];
+            $dup = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT id FROM {$runsTable} WHERE op_key='repricer_run' AND status IN ('requested','running','partial') AND meta_json LIKE %s LIMIT 1",
+                    '%"assignment_id":' . $aid . '%'
+                )
+            );
+            if ( $dup ) {
+                $skipped++;
+                $items[] = [ 'assignment_id' => $aid, 'run_id' => (int) $dup, 'scheduled' => false, 'reason' => 'duplicate' ];
+                continue;
+            }
+            $payload = [
+                'assignment_id'   => $aid,
+                'mode'            => $mode,
+                'dry_run'         => $mode === 'dry_run',
+                'timebox_seconds' => $timebox,
+                'chunk_size'      => $chunk,
+                'max_products'    => $max,
+            ];
+            $inserted = $wpdb->insert(
+                $runsTable,
+                [
+                    'op_key'       => 'repricer_run',
+                    'action_type'  => 'repricer_run',
+                    'status'       => 'requested',
+                    'requested_at' => $now,
+                    'created_at'   => $now,
+                    'updated_at'   => $now,
+                    'meta_json'    => wp_json_encode( $payload ),
+                ]
+            );
+            if ( false === $inserted ) {
+                $skipped++;
+                $items[] = [ 'assignment_id' => $aid, 'run_id' => null, 'scheduled' => false, 'reason' => 'insert_failed' ];
+                continue;
+            }
+            $runId = (int) $wpdb->insert_id;
+            $args = [
+                [
+                    'run_id'  => $runId,
+                    'op_key'  => 'repricer_run',
+                    'payload' => $payload,
+                ],
+            ];
+            if ( function_exists( 'as_enqueue_async_action' ) ) {
+                as_enqueue_async_action( 'aurora_ops_dispatch', $args, 'aurora' );
+            }
+            $enqueued++;
+            $items[] = [ 'assignment_id' => $aid, 'run_id' => $runId, 'scheduled' => true ];
+        }
+
+        return new WP_REST_Response( [
+            'ok'        => true,
+            'total'     => count( $assignments ),
+            'enqueued'  => $enqueued,
+            'skipped'   => $skipped,
+            'items'     => $items,
+        ], 200 );
+    }
+
+    public function repricer_preview( WP_REST_Request $request ) {
+        $assignmentId = (int) ( $request['assignment_id'] ?? 0 );
+        if ( $assignmentId <= 0 ) {
+            return new WP_Error( 'aurora_repricer_preview_bad_request', 'assignment_id required', [ 'status' => 400 ] );
+        }
+        $limit   = max( 1, (int) ( $request['limit'] ?? 20 ) );
+        $afterId = (int) ( $request['after_id'] ?? 0 );
+
+        $repo = new RepriceAssignmentRepository();
+        $assignment = $repo->get( $assignmentId );
+        if ( ! $assignment || (int) ( $assignment['is_enabled'] ?? 0 ) !== 1 ) {
+            return new WP_Error( 'aurora_repricer_preview_not_found', 'assignment not found', [ 'status' => 404 ] );
+        }
+        $scope   = is_array( $assignment['scope_json'] ?? null ) ? $assignment['scope_json'] : [];
+        $filters = is_array( $assignment['filters_json'] ?? null ) ? $assignment['filters_json'] : [];
+        $resolver = new \Aurora\Enterprise\Repricer\RepriceScopeResolver();
+        $ids = $resolver->resolve_product_ids( $scope, $filters, $limit, $afterId );
+
+        return new WP_REST_Response( [
+            'ok'              => true,
+            'assignment_id'   => $assignmentId,
+            'scope_type'      => $scope['scope_type'] ?? ( $scope['type'] ?? '' ),
+            'selected_count'  => count( $ids ),
+            'product_ids'     => array_values( $ids ),
+        ], 200 );
     }
 
     public function repricer_assignments_create( WP_REST_Request $request ) {
