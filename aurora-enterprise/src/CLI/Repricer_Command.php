@@ -249,6 +249,94 @@ class Repricer_Command extends WP_CLI_Command {
     }
 
     /**
+     * Run all enabled assignments (enqueue async).
+     *
+     * ## OPTIONS
+     * [--mode=<dry_run|apply>]
+     * [--timebox_seconds=<int>]
+     * [--chunk_size=<int>]
+     * [--max_products=<int>]
+     */
+    public function run_all( array $args, array $assoc_args ) : void {
+        $mode     = isset( $assoc_args['mode'] ) ? (string) $assoc_args['mode'] : 'dry_run';
+        $timebox  = isset( $assoc_args['timebox_seconds'] ) ? (int) $assoc_args['timebox_seconds'] : 90;
+        $chunk    = isset( $assoc_args['chunk_size'] ) ? (int) $assoc_args['chunk_size'] : 500;
+        $maxProd  = isset( $assoc_args['max_products'] ) ? (int) $assoc_args['max_products'] : 10000;
+
+        $repo = new RepriceAssignmentRepository();
+        $assignments = $repo->list_enabled_ordered( 500 );
+        if ( empty( $assignments ) ) {
+            WP_CLI::warning( 'No enabled assignments found' );
+            return;
+        }
+
+        $runsTable = $GLOBALS['wpdb']->prefix . 'aurora_ops_runs';
+        $now       = current_time( 'mysql', true );
+        $enqueued  = 0;
+        $skipped   = 0;
+        $items     = [];
+        foreach ( $assignments as $assignment ) {
+            $aid = (int) $assignment['id'];
+            // Dedup: skip if existing requested|running|partial for this assignment.
+            $dup = $GLOBALS['wpdb']->get_var(
+                $GLOBALS['wpdb']->prepare(
+                    "SELECT id FROM {$runsTable} WHERE op_key='repricer_run' AND status IN ('requested','running','partial') AND meta_json LIKE %s LIMIT 1",
+                    '%"assignment_id":' . $aid . '%'
+                )
+            );
+            if ( $dup ) {
+                $skipped++;
+                $items[] = [ 'assignment_id' => $aid, 'run_id' => (int) $dup, 'scheduled' => false, 'reason' => 'duplicate' ];
+                continue;
+            }
+            $payload = [
+                'assignment_id'   => $aid,
+                'mode'            => $mode,
+                'dry_run'         => $mode === 'dry_run',
+                'timebox_seconds' => $timebox,
+                'chunk_size'      => $chunk,
+                'max_products'    => $maxProd,
+            ];
+            $inserted = $GLOBALS['wpdb']->insert(
+                $runsTable,
+                [
+                    'op_key'       => 'repricer_run',
+                    'action_type'  => 'repricer_run',
+                    'status'       => 'requested',
+                    'requested_at' => $now,
+                    'created_at'   => $now,
+                    'updated_at'   => $now,
+                    'meta_json'    => wp_json_encode( $payload ),
+                ]
+            );
+            if ( false === $inserted ) {
+                $skipped++;
+                $items[] = [ 'assignment_id' => $aid, 'run_id' => null, 'scheduled' => false, 'reason' => 'insert_failed' ];
+                continue;
+            }
+            $runId = (int) $GLOBALS['wpdb']->insert_id;
+            $argsPayload = [
+                [
+                    'run_id'  => $runId,
+                    'op_key'  => 'repricer_run',
+                    'payload' => $payload,
+                ],
+            ];
+            if ( function_exists( 'as_enqueue_async_action' ) ) {
+                as_enqueue_async_action( 'aurora_ops_dispatch', $argsPayload, 'aurora' );
+            }
+            $enqueued++;
+            $items[] = [ 'assignment_id' => $aid, 'run_id' => $runId, 'scheduled' => true ];
+        }
+
+        WP_CLI::log( sprintf( 'assignments=%d enqueued=%d skipped=%d', count( $assignments ), $enqueued, $skipped ) );
+        foreach ( $items as $item ) {
+            WP_CLI::log( sprintf( 'assignment_id=%d run_id=%s scheduled=%s reason=%s', $item['assignment_id'], $item['run_id'] ?? 'null', $item['scheduled'] ? 'yes' : 'no', $item['reason'] ?? '-' ) );
+        }
+        WP_CLI::success( 'run-all complete' );
+    }
+
+    /**
      * @param array<string,mixed> $payload
      */
     private function create_run_row( array $payload ) : int {

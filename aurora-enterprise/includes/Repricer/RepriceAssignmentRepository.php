@@ -80,6 +80,30 @@ class RepriceAssignmentRepository {
         return $rows;
     }
 
+    /**
+     * List enabled assignments ordered by priority DESC then id ASC.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function list_enabled_ordered( int $limit = 100 ) : array {
+        $rows = $this->db->get_results(
+            $this->db->prepare(
+                "SELECT * FROM {$this->table} WHERE is_enabled = 1 ORDER BY priority DESC, id ASC LIMIT %d",
+                max( 1, $limit )
+            ),
+            ARRAY_A
+        );
+        if ( empty( $rows ) ) {
+            return [];
+        }
+        foreach ( $rows as &$row ) {
+            $row['scope_json']   = $this->decode_json_array( $row['scope_json'] ?? [] );
+            $row['filters_json'] = $this->decode_json_array( $row['filters_json'] ?? [] );
+            $row['rule_json']    = $this->decode_json_array( $row['rule_json'] ?? [] );
+        }
+        return $rows;
+    }
+
     public function touch_last_run( int $id, int $run_id ) : void {
         $this->db->update(
             $this->table,
