@@ -258,6 +258,19 @@ class System_Status_Provider {
             );
         }
 
+        $lastRollbackRun = $wpdb->get_row(
+            "SELECT id, status, message, error, requested_at, started_at, finished_at
+             FROM {$tables['runs']}
+             WHERE op_key='repricer_rollback'
+             ORDER BY id DESC
+             LIMIT 1",
+            ARRAY_A
+        );
+
+        $rollbackQueue = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$tables['runs']} WHERE op_key='repricer_rollback' AND status IN ('requested','running','partial')"
+        );
+
         $mode = 'dry_run';
         if ( $lastRun && ! empty( $lastRun['meta_json'] ) ) {
             $meta = json_decode( (string) $lastRun['meta_json'], true );
@@ -331,10 +344,12 @@ class System_Status_Provider {
             'assignments_count' => $enabledAssignmentsCount,
             'enabled_assignments_count' => $enabledAssignmentsCount,
             'queued_runs_count' => $queuedRuns,
+            'rollback_queue_count' => $rollbackQueue,
             'assignments'       => $assignmentsPreview,
             'last_assignment'   => $assignRepo->last_assignment(),
             'last_apply_run'    => $lastApplyRun,
             'rollback_pending_count_last_apply_run' => $rollbackPending,
+            'last_rollback_run' => $lastRollbackRun ?: null,
             'scheduler'         => $scheduler,
         ];
     }

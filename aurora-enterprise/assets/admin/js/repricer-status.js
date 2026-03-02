@@ -26,6 +26,7 @@
     const decisions = repr.decisions || {};
     const recent = repr.recent_decisions || [];
     const assignments = repr.assignments || [];
+    const lastRollback = repr.last_rollback_run || null;
 
     state.lastRunStatus = lastRun?.status || null;
 
@@ -69,17 +70,18 @@
           <h3>Progress</h3>
           ${progressHtml}
         </div>
-        <div class="aurora-card">
-          <h3>Decisions</h3>
-          <div><strong>Totale:</strong> ${decisions.decisions_count ?? 0}</div>
-          <div><strong>Prodotti unici:</strong> ${decisions.distinct_products ?? 0}</div>
-          <div><strong>Applied:</strong> ${decisions.applied_count_last_run ?? 0}</div>
-          <div><strong>Rollback pending (last apply run):</strong> ${repr.rollback_pending_count_last_apply_run ?? 0}</div>
-         <table class="aurora-table" aria-label="Repricer breakdown">
-           <thead><tr><th>Rule</th><th>Count</th></tr></thead>
-           <tbody>${breakdown || '<tr><td colspan="2" class="aurora-muted">N/A</td></tr>'}</tbody>
-         </table>
-        </div>
+      <div class="aurora-card">
+        <h3>Decisions</h3>
+        <div><strong>Totale:</strong> ${decisions.decisions_count ?? 0}</div>
+        <div><strong>Prodotti unici:</strong> ${decisions.distinct_products ?? 0}</div>
+        <div><strong>Applied:</strong> ${decisions.applied_count_last_run ?? 0}</div>
+        <div><strong>Rollback pending (last apply run):</strong> ${repr.rollback_pending_count_last_apply_run ?? 0}</div>
+        <div><strong>Rollback queue:</strong> ${repr.rollback_queue_count ?? 0}</div>
+        <table class="aurora-table" aria-label="Repricer breakdown">
+          <thead><tr><th>Rule</th><th>Count</th></tr></thead>
+          <tbody>${breakdown || '<tr><td colspan="2" class="aurora-muted">N/A</td></tr>'}</tbody>
+        </table>
+       </div>
       </div>
       <div class="aurora-card">
         <h3>Decisions recenti</h3>
@@ -106,6 +108,7 @@
         <div class="aurora-meta">
           <span><strong>Enabled:</strong> ${repr.enabled_assignments_count ?? 0}</span>
           <span><strong>Queued runs:</strong> ${repr.queued_runs_count ?? 0}</span>
+          <span><strong>Rollback queued:</strong> ${repr.rollback_queue_count ?? 0}</span>
           <button class="button run-all-dry">Run-all dry-run</button>
           <button class="button button-primary run-all-apply">Run-all apply</button>
           <span id="aurora-runall-result" class="aurora-muted"></span>
@@ -135,10 +138,24 @@
         </table>
         <div id="aurora-preview-panel" class="aurora-muted"></div>
       </div>
+      <div class="aurora-card">
+        <h3>Rollback</h3>
+        <div class="aurora-meta">
+          <div><strong>Last rollback:</strong> ${lastRollback ? `#${lastRollback.id} ${badge(lastRollback.status)} (${lastRollback.updated_at || lastRollback.finished_at || '-'})` : 'n/a'}</div>
+        </div>
+        <form id="aurora-rollback-form" class="aurora-form">
+          ${formField("rollback_run_id", "Apply run_id", '')}
+          <label><input type="checkbox" name="rollback_dry" /> Dry run</label>
+          <button class="button" type="submit">Rollback run_id</button>
+          <button class="button button-primary" type="button" id="aurora-rollback-last">Rollback last apply</button>
+          <span id="aurora-rollback-result" class="aurora-muted"></span>
+        </form>
+      </div>
     `;
     root.innerHTML = html;
     bindForm();
     bindAssignments();
+    bindRollback(repr);
   };
 
   const formField = (name, label, value) =>
@@ -250,6 +267,57 @@
         }
       });
     });
+  };
+
+  const bindRollback = (repr) => {
+    const form = document.getElementById("aurora-rollback-form");
+    const lastBtn = document.getElementById("aurora-rollback-last");
+    const result = document.getElementById("aurora-rollback-result");
+    const lastApply = repr?.last_apply_run?.run_id || null;
+
+    const callRollback = async (runId, dry) => {
+      result.textContent = "Scheduling rollback…";
+      try {
+        const res = await fetch(`${restBase}repricer/rollback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-WP-Nonce": nonce },
+          body: JSON.stringify({ run_id: runId, dry_run: dry }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          result.textContent = json?.message || `Error ${res.status}`;
+        } else {
+          result.textContent = `Scheduled rollback run_id=${json.run_id || "n/a"}`;
+          schedulePoll(true);
+        }
+      } catch (e) {
+        result.textContent = e.message || "Request failed";
+      }
+    };
+
+    if (form) {
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(form).entries());
+        const runId = Number(data.rollback_run_id || 0);
+        if (!runId) {
+          result.textContent = "run_id required";
+          return;
+        }
+        const dry = form.querySelector('input[name="rollback_dry"]').checked;
+        callRollback(runId, dry);
+      });
+    }
+    if (lastBtn) {
+      lastBtn.onclick = () => {
+        if (!lastApply) {
+          result.textContent = "No apply run available";
+          return;
+        }
+        const dry = form?.querySelector('input[name="rollback_dry"]').checked || false;
+        callRollback(lastApply, dry);
+      };
+    }
   };
 
   const fetchStatus = async () => {
