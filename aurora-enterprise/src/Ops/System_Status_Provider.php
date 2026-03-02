@@ -270,6 +270,16 @@ class System_Status_Provider {
             unset( $lastRun['meta_json'] );
         }
 
+        $tickLast = get_option( 'aurora_repricer_tick_last', [] );
+        $tickCursor = get_option( 'aurora_repricer_tick_cursor', 0 );
+        $scheduler = [
+            'enabled'      => true,
+            'cursor'       => (int) $tickCursor,
+            'enqueued_last'=> is_array( $tickLast ) ? (int) ( $tickLast['enqueued'] ?? 0 ) : 0,
+            'skipped_last' => is_array( $tickLast ) ? (int) ( $tickLast['skipped'] ?? 0 ) : 0,
+            'last_at'      => is_array( $tickLast ) ? ( $tickLast['at'] ?? null ) : null,
+        ];
+
         $queuedRuns = (int) $wpdb->get_var(
             "SELECT COUNT(*) FROM {$tables['runs']} WHERE op_key='repricer_run' AND status IN ('requested','running','partial')"
         );
@@ -325,6 +335,7 @@ class System_Status_Provider {
             'last_assignment'   => $assignRepo->last_assignment(),
             'last_apply_run'    => $lastApplyRun,
             'rollback_pending_count_last_apply_run' => $rollbackPending,
+            'scheduler'         => $scheduler,
         ];
     }
 }
