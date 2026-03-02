@@ -25,6 +25,7 @@
     const progress = repr.progress;
     const decisions = repr.decisions || {};
     const recent = repr.recent_decisions || [];
+    const assignments = repr.assignments || [];
 
     state.lastRunStatus = lastRun?.status || null;
 
@@ -100,9 +101,44 @@
           <span id="aurora-repricer-result" class="aurora-muted"></span>
         </form>
       </div>
+      <div class="aurora-card">
+        <h3>Assignments</h3>
+        <div class="aurora-meta">
+          <span><strong>Enabled:</strong> ${repr.enabled_assignments_count ?? 0}</span>
+          <span><strong>Queued runs:</strong> ${repr.queued_runs_count ?? 0}</span>
+          <button class="button run-all-dry">Run-all dry-run</button>
+          <button class="button button-primary run-all-apply">Run-all apply</button>
+          <span id="aurora-runall-result" class="aurora-muted"></span>
+        </div>
+        <table class="aurora-table" id="aurora-assignments-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Priority</th><th>Scope</th><th>Last run</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${assignments.length === 0 ? '<tr><td colspan="6" class="aurora-muted">No assignments</td></tr>' : assignments.map(a => {
+              const lr = a.last_run || {};
+              return `<tr data-assignment="${a.id}">
+                <td>${a.id}</td>
+                <td>${a.name || "-"}</td>
+                <td>${a.priority ?? "-"}</td>
+                <td>${a.scope_type || "-"}</td>
+                <td>${lr.id ? `#${lr.id} ${badge(lr.status)} (${lr.decisions_count ?? 0})` : '-'}</td>
+                <td>
+                  <button class="button preview-btn" data-id="${a.id}">Preview</button>
+                  <button class="button dryrun-btn" data-id="${a.id}">Dry-run</button>
+                </td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+        <div id="aurora-preview-panel" class="aurora-muted"></div>
+      </div>
     `;
     root.innerHTML = html;
     bindForm();
+    bindAssignments();
   };
 
   const formField = (name, label, value) =>
@@ -145,6 +181,74 @@
       } catch (err) {
         resEl.textContent = err?.message || "Request failed";
       }
+    });
+  };
+
+  const bindAssignments = () => {
+    const previewPanel = document.getElementById("aurora-preview-panel");
+    const runAllDry = document.querySelector(".run-all-dry");
+    const runAllApply = document.querySelector(".run-all-apply");
+    const resultEl = document.getElementById("aurora-runall-result");
+    const triggerRunAll = async (mode) => {
+      resultEl.textContent = "Scheduling…";
+      try {
+        const res = await fetch(`${restBase}repricer/run-all`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-WP-Nonce": nonce },
+          body: JSON.stringify({ mode }),
+        });
+        const json = await res.json();
+        resultEl.textContent = res.ok ? `enqueued=${json.enqueued ?? 0} skipped=${json.skipped ?? 0}` : (json?.message || `Error ${res.status}`);
+        schedulePoll(true);
+      } catch (e) {
+        resultEl.textContent = e.message || "Request failed";
+      }
+    };
+    if (runAllDry) runAllDry.onclick = () => triggerRunAll("dry_run");
+    if (runAllApply) runAllApply.onclick = () => {
+      if (!confirm("Run all assignments in APPLY mode?")) return;
+      triggerRunAll("apply");
+    };
+
+    document.querySelectorAll(".preview-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.currentTarget.getAttribute("data-id");
+        previewPanel.textContent = "Preview loading…";
+        try {
+          const res = await fetch(`${restBase}repricer/preview`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-WP-Nonce": nonce },
+            body: JSON.stringify({ assignment_id: Number(id), limit: 20 }),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            previewPanel.textContent = json?.message || `Error ${res.status}`;
+            return;
+          }
+          previewPanel.textContent = `Preview assignment ${id}: ${json.selected_count} ids -> ${json.product_ids?.join(", ") || "n/a"}`;
+        } catch (err) {
+          previewPanel.textContent = err?.message || "Preview failed";
+        }
+      });
+    });
+
+    document.querySelectorAll(".dryrun-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const id = e.currentTarget.getAttribute("data-id");
+        previewPanel.textContent = `Scheduling dry-run for assignment ${id}…`;
+        try {
+          const res = await fetch(`${restBase}repricer/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-WP-Nonce": nonce },
+            body: JSON.stringify({ assignment_id: Number(id), dry_run: true }),
+          });
+          const json = await res.json();
+          previewPanel.textContent = res.ok ? `Scheduled run_id=${json.run_id}` : (json?.message || `Error ${res.status}`);
+          schedulePoll(true);
+        } catch (err) {
+          previewPanel.textContent = err?.message || "Run failed";
+        }
+      });
     });
   };
 
