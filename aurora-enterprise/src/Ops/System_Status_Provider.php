@@ -287,10 +287,14 @@ class System_Status_Provider {
         $tickCursor = get_option( 'aurora_repricer_tick_cursor', 0 );
         $scheduler = [
             'enabled'      => true,
+            'mode'         => is_array( $tickLast ) ? ( $tickLast['mode'] ?? 'interval' ) : 'interval',
+            'in_window'    => is_array( $tickLast ) ? ( $tickLast['in_window'] ?? null ) : null,
             'cursor'       => (int) $tickCursor,
             'enqueued_last'=> is_array( $tickLast ) ? (int) ( $tickLast['enqueued'] ?? 0 ) : 0,
             'skipped_last' => is_array( $tickLast ) ? (int) ( $tickLast['skipped'] ?? 0 ) : 0,
+            'skipped_out_of_window_last' => is_array( $tickLast ) ? (int) ( $tickLast['skipped_out_window'] ?? 0 ) : 0,
             'last_at'      => is_array( $tickLast ) ? ( $tickLast['at'] ?? null ) : null,
+            'last_error'   => is_array( $tickLast ) ? ( $tickLast['error'] ?? null ) : null,
         ];
 
         $queuedRuns = (int) $wpdb->get_var(

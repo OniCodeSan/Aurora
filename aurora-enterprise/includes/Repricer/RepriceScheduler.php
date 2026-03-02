@@ -35,10 +35,14 @@ class RepriceScheduler {
         $cursor   = (int) get_option( 'aurora_repricer_tick_cursor', 0 );
         $enqueued = 0;
         $skipped  = 0;
+        $skippedOutWindow = 0;
+        $lastError = null;
+        $mode = 'interval';
+        $inWindow = null;
 
         $assignments = $this->assignments->list_enabled_ordered( 500 );
         if ( empty( $assignments ) ) {
-            $this->persist_stats( $enqueued, $skipped, $cursor );
+            $this->persist_stats( $enqueued, $skipped, $skippedOutWindow, $cursor, $mode, $inWindow, $lastError );
             return;
         }
 
@@ -62,8 +66,15 @@ class RepriceScheduler {
             $aid    = (int) $assignment['id'];
             $cursor = $aid;
 
-            if ( ! $this->is_due_now( $assignment ) ) {
-                $skipped++;
+            $due = $this->is_due_now( $assignment );
+            $mode = $due['mode'];
+            $inWindow = $due['in_window'];
+            if ( ! $due['due'] ) {
+                if ( false === $due['in_window'] && 'windows' === $due['mode'] ) {
+                    $skippedOutWindow++;
+                } else {
+                    $skipped++;
+                }
                 continue;
             }
             if ( $this->has_pending_run( $aid ) ) {
@@ -77,26 +88,78 @@ class RepriceScheduler {
             }
         }
 
-        $this->persist_stats( $enqueued, $skipped, $cursor );
+        $this->persist_stats( $enqueued, $skipped, $skippedOutWindow, $cursor, $mode, $inWindow, $lastError );
     }
 
     /**
      * @param array<string,mixed> $assignment
+     * @return array{due:bool,mode:string,in_window:?bool}
      */
-    private function is_due_now( array $assignment ) : bool {
+    private function is_due_now( array $assignment ) : array {
         $schedule = $assignment['schedule_json'] ?? [];
         if ( ! is_array( $schedule ) || empty( $schedule ) ) {
-            return false;
+            return [ 'due' => false, 'mode' => 'none', 'in_window' => null ];
         }
-        if ( ( $schedule['type'] ?? '' ) !== 'interval' ) {
-            return false;
+        $type = (string) ( $schedule['type'] ?? 'interval' );
+        if ( 'windows' === $type ) {
+            $inWindow = $this->is_in_window( $schedule );
+            return [ 'due' => $inWindow, 'mode' => 'windows', 'in_window' => $inWindow ];
         }
+        // interval
         $minutes = max( 1, (int) ( $schedule['interval_minutes'] ?? 0 ) );
         $lastTs  = $this->last_run_timestamp( (int) $assignment['id'] );
         if ( 0 === $lastTs ) {
-            return true;
+            return [ 'due' => true, 'mode' => 'interval', 'in_window' => true ];
         }
-        return ( time() - $lastTs ) >= ( $minutes * 60 );
+        return [ 'due' => ( time() - $lastTs ) >= ( $minutes * 60 ), 'mode' => 'interval', 'in_window' => true ];
+    }
+
+    /**
+     * @param array<string,mixed> $schedule
+     */
+    private function is_in_window( array $schedule ) : bool {
+        $tz = $schedule['timezone'] ?? 'Europe/Rome';
+        $windows = $schedule['windows'] ?? [];
+        if ( ! is_array( $windows ) || empty( $windows ) ) {
+            return false;
+        }
+        try {
+            $nowTz = new \DateTime( 'now', new \DateTimeZone( $tz ) );
+        } catch ( \Exception $e ) {
+            $nowTz = new \DateTime( 'now', new \DateTimeZone( 'UTC' ) );
+        }
+        $nowMinutes = (int) $nowTz->format( 'H' ) * 60 + (int) $nowTz->format( 'i' );
+
+        foreach ( $windows as $win ) {
+            if ( ! is_array( $win ) ) {
+                continue;
+            }
+            $from = isset( $win['from'] ) ? (string) $win['from'] : null;
+            $to   = isset( $win['to'] ) ? (string) $win['to'] : null;
+            if ( empty( $from ) || empty( $to ) ) {
+                continue;
+            }
+            $fromParts = explode( ':', $from );
+            $toParts   = explode( ':', $to );
+            if ( count( $fromParts ) < 2 || count( $toParts ) < 2 ) {
+                continue;
+            }
+            $fromM = (int) $fromParts[0] * 60 + (int) $fromParts[1];
+            $toM   = (int) $toParts[0] * 60 + (int) $toParts[1];
+
+            if ( $fromM <= $toM ) {
+                // same day window
+                if ( $nowMinutes >= $fromM && $nowMinutes <= $toM ) {
+                    return true;
+                }
+            } else {
+                // overnight window (e.g., 23:00-02:00)
+                if ( $nowMinutes >= $fromM || $nowMinutes <= $toM ) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private function last_run_timestamp( int $assignmentId ) : int {
@@ -165,14 +228,18 @@ class RepriceScheduler {
         return true;
     }
 
-    private function persist_stats( int $enqueued, int $skipped, int $cursor ) : void {
+    private function persist_stats( int $enqueued, int $skipped, int $skippedOutWindow, int $cursor, string $mode, ?bool $inWindow, ?string $lastError ) : void {
         update_option(
             'aurora_repricer_tick_last',
             [
                 'at'       => current_time( 'mysql', true ),
                 'enqueued' => $enqueued,
                 'skipped'  => $skipped,
+                'skipped_out_window' => $skippedOutWindow,
                 'cursor'   => $cursor,
+                'mode'     => $mode,
+                'in_window'=> $inWindow,
+                'error'    => $lastError,
             ],
             false
         );
