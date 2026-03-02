@@ -62,9 +62,6 @@ class RepriceScopeResolver {
         if ( empty( $ids ) ) {
             return [];
         }
-        $ids = $this->filter_require_price( $ids, $filters );
-        $ids = $this->filter_require_cost( $ids, $filters );
-        $ids = $this->apply_price_bounds( $ids, $filters );
         return array_slice( $ids, 0, $limit );
     }
 

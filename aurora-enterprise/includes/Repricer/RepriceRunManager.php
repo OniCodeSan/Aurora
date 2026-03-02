@@ -38,27 +38,64 @@ class RepriceRunManager {
         $startedAt = microtime( true );
         $this->logger->info( 'repricer', 'repricer start', [ 'run_id' => $runId, 'payload' => $config ] );
 
-        $scope = $payload['scope'] ?? null;
+        $scope   = $payload['scope'] ?? null;
         $filters = $payload['filters'] ?? [];
-        if ( isset( $payload['assignment_id'] ) ) {
-            $assignment = $this->assignments->get( (int) $payload['assignment_id'] );
+        $assignmentId = isset( $payload['assignment_id'] ) ? (int) $payload['assignment_id'] : null;
+        if ( ! $assignmentId ) {
+            $runRow = $this->runs->find( $runId );
+            if ( is_array( $runRow ) && ! empty( $runRow['meta_json'] ) ) {
+                $meta = json_decode( (string) $runRow['meta_json'], true );
+                if ( is_array( $meta ) && ! empty( $meta['assignment_id'] ) ) {
+                    $assignmentId = (int) $meta['assignment_id'];
+                }
+            }
+        }
+        if ( $assignmentId ) {
+            $assignment = $this->assignments->get( $assignmentId );
             if ( ! $assignment || (int) ( $assignment['is_enabled'] ?? 0 ) !== 1 ) {
                 $this->runs->mark_error( $runId, 'Assignment not found or disabled' );
                 return;
             }
-            $assignmentScope = is_array( $assignment['scope_json'] ?? null ) ? $assignment['scope_json'] : ( json_decode( (string) ( $assignment['scope_json'] ?? '{}' ), true ) ?: [] );
-            $assignmentRule  = is_array( $assignment['rule_json'] ?? null ) ? $assignment['rule_json'] : ( json_decode( (string) ( $assignment['rule_json'] ?? '{}' ), true ) ?: [] );
-            $assignmentFilters = is_array( $assignment['filters_json'] ?? null ) ? $assignment['filters_json'] : ( json_decode( (string) ( $assignment['filters_json'] ?? '{}' ), true ) ?: [] );
-            $scope = $scope ?? $assignmentScope;
-            $filters = array_merge( $assignmentFilters, $filters );
-            $config = array_merge( $assignmentRule, $config );
-            $config['assignment_id'] = (int) $assignment['id'];
+            $assignmentScope   = is_array( $assignment['scope_json'] ?? null ) ? $assignment['scope_json'] : [];
+            if ( empty( $assignmentScope ) ) {
+                $rawScope = $this->db->get_var( $this->db->prepare( "SELECT scope_json FROM {$this->db->prefix}aurora_reprice_assignments WHERE id=%d", $assignmentId ) );
+                $decoded  = is_string( $rawScope ) ? json_decode( $rawScope, true ) : [];
+                if ( is_array( $decoded ) ) {
+                    $assignmentScope = $decoded;
+                }
+            }
+            $assignmentRule    = is_array( $assignment['rule_json'] ?? null ) ? $assignment['rule_json'] : [];
+            $assignmentFilters = is_array( $assignment['filters_json'] ?? null ) ? $assignment['filters_json'] : [];
+            if ( empty( $assignmentFilters ) ) {
+                $rawFilters = $this->db->get_var( $this->db->prepare( "SELECT filters_json FROM {$this->db->prefix}aurora_reprice_assignments WHERE id=%d", $assignmentId ) );
+                $decodedFilters = is_string( $rawFilters ) ? json_decode( $rawFilters, true ) : [];
+                if ( is_array( $decodedFilters ) ) {
+                    $assignmentFilters = $decodedFilters;
+                }
+            }
+
+            $scope   = $assignmentScope;
+            $filters = $assignmentFilters;
+            $config  = array_merge( $assignmentRule, $config );
+            $config['assignment_id'] = $assignmentId;
             $scopeType = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
             if ( '' === trim( $scopeType ) ) {
                 $this->runs->mark_error( $runId, 'Invalid scope_type' );
                 return;
             }
-            $this->logger->info( 'repricer', 'assignment resolved', [ 'run_id' => $runId, 'assignment_id' => $assignment['id'], 'scope_type' => $scopeType ] );
+            $this->logger->info(
+                'repricer',
+                'assignment resolved',
+                [
+                    'run_id'                => $runId,
+                    'assignment_id'         => $assignmentId,
+                    'scope_type'            => $scopeType,
+                    'products_count'        => is_array( $scope['products'] ?? null ) ? count( $scope['products'] ) : 0,
+                    'exclude_products_count'=> is_array( $scope['exclude_products'] ?? null ) ? count( $scope['exclude_products'] ) : 0,
+                    'filters_exclude_count' => is_array( $filters['exclude_products'] ?? null ) ? count( $filters['exclude_products'] ) : 0,
+                    'categories_count'      => is_array( $scope['categories'] ?? null ) ? count( $scope['categories'] ) : 0,
+                ]
+            );
         }
 
         if ( ! $this->lock->acquire( $owner ) ) {
@@ -95,7 +132,14 @@ class RepriceRunManager {
                 'selected_count'    => 0,
                 'decisions_written' => 0,
             ] );
-            $this->runs->mark_error( $runId, 'No products selected' );
+            $debugMsg = sprintf(
+                'No products selected (stage=start, scope_products=%d [%s], categories=%d, excludes=%d)',
+                is_array( $scope['products'] ?? null ) ? count( $scope['products'] ) : 0,
+                is_array( $scope['products'] ?? null ) ? implode( ',', $scope['products'] ) : '',
+                is_array( $scope['categories'] ?? null ) ? count( $scope['categories'] ) : 0,
+                is_array( $scope['exclude_products'] ?? null ) ? count( $scope['exclude_products'] ) : 0
+            );
+            $this->runs->mark_error( $runId, $debugMsg );
             $this->lock->release( $owner );
             return;
         }
@@ -125,11 +169,7 @@ class RepriceRunManager {
             }
 
             $limit = min( $chunkSize, $remaining );
-            if ( $scope ) {
-                $ids = $this->resolver->resolve_product_ids( $scope, $filters, $limit, $lastId );
-            } else {
-                $ids = $this->chunks->fetch_next_ids( $lastId, $limit );
-            }
+            $ids   = $this->resolver->resolve_product_ids( $scope, $filters, $limit, $lastId );
             $selectedCount = count( $ids );
 
             if ( $selectedCount === 0 ) {
@@ -140,8 +180,15 @@ class RepriceRunManager {
                     'selected_count'    => 0,
                     'decisions_written' => $decisionsWritten,
                 ] );
-                $this->runs->mark_error( $runId, 'No products selected' );
-                $this->logger->error( 'repricer', 'no products selected', [ 'run_id' => $runId ] );
+                $debugMsg = sprintf(
+                    'No products selected (stage=loop, scope_products=%d [%s], categories=%d, excludes=%d)',
+                    is_array( $scope['products'] ?? null ) ? count( $scope['products'] ) : 0,
+                    is_array( $scope['products'] ?? null ) ? implode( ',', $scope['products'] ) : '',
+                    is_array( $scope['categories'] ?? null ) ? count( $scope['categories'] ) : 0,
+                    is_array( $scope['exclude_products'] ?? null ) ? count( $scope['exclude_products'] ) : 0
+                );
+                $this->runs->mark_error( $runId, $debugMsg );
+                $this->logger->error( 'repricer', 'no products selected', [ 'run_id' => $runId, 'message' => $debugMsg ] );
                 $this->lock->release( $owner );
                 return;
             }
