@@ -159,6 +159,7 @@ class System_Status_Provider {
         }
 
         $assignRepo = new \Aurora\Enterprise\Repricer\RepriceAssignmentRepository();
+        $enabledAssignmentsCount = $assignRepo->count_enabled();
 
         $lastRun = $wpdb->get_row(
             "SELECT id, op_key, status, message, error, requested_at, started_at, finished_at, updated_at, meta_json
@@ -269,6 +270,43 @@ class System_Status_Provider {
             unset( $lastRun['meta_json'] );
         }
 
+        $queuedRuns = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$tables['runs']} WHERE op_key='repricer_run' AND status IN ('requested','running','partial')"
+        );
+
+        $assignmentsPreview = [];
+        $assignmentsList = $assignRepo->list_enabled_ordered( 10 );
+        foreach ( $assignmentsList as $assignment ) {
+            $aid = (int) $assignment['id'];
+            $scopeType = $assignment['scope_type'] ?? ( $assignment['scope_json']['scope_type'] ?? ( $assignment['scope_json']['type'] ?? '' ) );
+            $lastRunRow = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT id, status, updated_at FROM {$tables['runs']} WHERE op_key='repricer_run' AND meta_json LIKE %s ORDER BY id DESC LIMIT 1",
+                    '%"assignment_id":' . $aid . '%'
+                ),
+                ARRAY_A
+            );
+            $lastRunSummary = null;
+            if ( $lastRunRow ) {
+                $rid = (int) $lastRunRow['id'];
+                $lastRunSummary = [
+                    'id'         => $rid,
+                    'status'     => $lastRunRow['status'],
+                    'updated_at' => $lastRunRow['updated_at'],
+                    'decisions_count' => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$tables['decisions']} WHERE run_id=%d", $rid ) ),
+                    'applied_count'   => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$tables['decisions']} WHERE run_id=%d AND applied=1", $rid ) ),
+                ];
+            }
+            $assignmentsPreview[] = [
+                'id'           => $aid,
+                'name'         => $assignment['name'] ?? '',
+                'priority'     => (int) ( $assignment['priority'] ?? 0 ),
+                'is_enabled'   => (int) ( $assignment['is_enabled'] ?? 0 ),
+                'scope_type'   => $scopeType,
+                'last_run'     => $lastRunSummary,
+            ];
+        }
+
         return [
             'tables_missing'    => false,
             'last_run'          => $lastRun ?: null,
@@ -280,7 +318,10 @@ class System_Status_Provider {
                 'applied_count_last_run' => $appliedCountLastRun,
             ],
             'recent_decisions'  => $recent,
-            'assignments_count' => $assignRepo->count_enabled(),
+            'assignments_count' => $enabledAssignmentsCount,
+            'enabled_assignments_count' => $enabledAssignmentsCount,
+            'queued_runs_count' => $queuedRuns,
+            'assignments'       => $assignmentsPreview,
             'last_assignment'   => $assignRepo->last_assignment(),
             'last_apply_run'    => $lastApplyRun,
             'rollback_pending_count_last_apply_run' => $rollbackPending,
