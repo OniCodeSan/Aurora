@@ -120,6 +120,12 @@ class Ops_Controller {
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
 
+        register_rest_route( 'aurora/v1', '/repricer/apply', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_apply' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
         register_rest_route( 'aurora/v1', '/repricer/run-all', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'repricer_run_all' ],
@@ -221,6 +227,80 @@ class Ops_Controller {
         }
 
         return new WP_Error( 'aurora_ops_schedule_failed', 'Failed to schedule repricer run.', [ 'status' => 500 ] );
+    }
+
+    public function repricer_apply( WP_REST_Request $request ) {
+        global $wpdb;
+        $assignment_id = (int) ( $request['assignment_id'] ?? 0 );
+        if ( $assignment_id <= 0 ) {
+            return new WP_Error( 'aurora_repricer_apply_bad_request', 'assignment_id required', [ 'status' => 400 ] );
+        }
+        $assignment = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id FROM {$wpdb->prefix}aurora_reprice_assignments WHERE id=%d AND is_enabled=1 LIMIT 1",
+                $assignment_id
+            ),
+            ARRAY_A
+        );
+        if ( ! $assignment ) {
+            return new WP_Error( 'aurora_repricer_apply_not_found', 'Assignment not found or disabled', [ 'status' => 404 ] );
+        }
+
+        $dup = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$wpdb->prefix}aurora_ops_runs WHERE op_key='repricer_run' AND status IN ('requested','running','partial') AND meta_json LIKE %s AND meta_json LIKE '%\"mode\":\"apply\"%' LIMIT 1",
+                '%"assignment_id":' . $assignment_id . '%'
+            )
+        );
+        if ( $dup ) {
+            error_log( sprintf( '[Aurora] repricer_apply dedup assignment_id=%d run_id=%d', $assignment_id, (int) $dup ) );
+            return new WP_Error( 'aurora_repricer_apply_duplicate', 'Repricer apply already pending for assignment', [ 'status' => 409, 'run_id' => (int) $dup ] );
+        }
+
+        $payload = [
+            'assignment_id'      => $assignment_id,
+            'mode'               => 'apply',
+            'dry_run'            => false,
+            'max_products'       => isset( $request['max_products'] ) ? (int) $request['max_products'] : 10000,
+            'chunk_size'         => isset( $request['chunk_size'] ) ? (int) $request['chunk_size'] : 500,
+            'timebox_seconds'    => isset( $request['timebox_seconds'] ) ? (int) $request['timebox_seconds'] : 90,
+            'min_margin_percent' => isset( $request['min_margin_percent'] ) ? (float) $request['min_margin_percent'] : 0.0,
+            'min_margin_abs'     => isset( $request['min_margin_abs'] ) ? (float) $request['min_margin_abs'] : 0.0,
+        ];
+
+        error_log( sprintf( '[Aurora] repricer_apply request assignment_id=%d', $assignment_id ) );
+
+        $now = current_time( 'mysql', true );
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'aurora_ops_runs',
+            [
+                'op_key'       => 'repricer_run',
+                'action_type'  => 'repricer_run',
+                'status'       => 'requested',
+                'requested_at' => $now,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+                'meta_json'    => wp_json_encode( $payload ),
+            ]
+        );
+        if ( false === $inserted ) {
+            return new WP_Error( 'aurora_repricer_apply_insert_failed', 'Unable to create ops run row.', [ 'status' => 500 ] );
+        }
+        $run_id = (int) $wpdb->insert_id;
+        $payload['run_id'] = $run_id;
+        $args = [
+            [
+                'run_id'  => $run_id,
+                'op_key'  => 'repricer_run',
+                'payload' => $payload,
+            ],
+        ];
+        if ( function_exists( 'as_enqueue_async_action' ) ) {
+            as_enqueue_async_action( 'aurora_ops_dispatch', $args, 'aurora' );
+        }
+
+        error_log( sprintf( '[Aurora] repricer_apply scheduled assignment_id=%d run_id=%d', $assignment_id, $run_id ) );
+        return new WP_REST_Response( [ 'ok' => true, 'run_id' => $run_id, 'scheduled' => true ], 200 );
     }
 
     public function repricer_run_all( WP_REST_Request $request ) {
