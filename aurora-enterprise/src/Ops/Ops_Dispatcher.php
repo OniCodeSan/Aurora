@@ -26,7 +26,7 @@ class Ops_Dispatcher {
             error_log( '[Aurora] Ops_Dispatcher skipped: invalid run_id' );
             return;
         }
-        if ( ! in_array( $op_key, [ 'rebuild', 'sweep_leases', 'feed_enqueue', 'feed_run', 'repricer_run' ], true ) ) {
+        if ( ! in_array( $op_key, [ 'rebuild', 'sweep_leases', 'feed_enqueue', 'feed_run', 'repricer_run', 'repricer_rollback' ], true ) ) {
             error_log( sprintf( '[Aurora] Ops_Dispatcher skipped: run_id=%d invalid op_key=%s', $run_id, $op_key ) );
             return;
         }

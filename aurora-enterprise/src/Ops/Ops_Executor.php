@@ -35,6 +35,8 @@ class Ops_Executor {
                 return $this->execute_feed_run( $payload );
             case 'repricer_run':
                 return $this->execute_repricer_run( $payload );
+            case 'repricer_rollback':
+                return $this->execute_repricer_rollback( $payload );
             default:
                 throw new \RuntimeException( 'Unsupported op key: ' . $opKey );
         }
@@ -204,6 +206,26 @@ class Ops_Executor {
             'message' => 'repricer_run',
             'run_id'  => $runId,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function execute_repricer_rollback( array $payload ) : array {
+        $runId = (int) ( $payload['run_id'] ?? 0 );
+        $targetRunId = (int) ( $payload['target_run_id'] ?? 0 );
+        if ( $targetRunId <= 0 ) {
+            throw new \RuntimeException( 'Missing target_run_id for repricer_rollback' );
+        }
+        $limit = isset( $payload['chunk_size'] ) ? max( 1, (int) $payload['chunk_size'] ) : 200;
+        $dry   = isset( $payload['dry_run'] ) ? (bool) $payload['dry_run'] : false;
+        $service = new \Aurora\Enterprise\Repricer\RepriceRollbackService();
+        $result = $service->rollback_run( $targetRunId, $limit, $dry );
+        $result['message']       = 'repricer_rollback';
+        $result['run_id']        = $runId;
+        $result['target_run_id'] = $targetRunId;
+        return $result;
     }
 
     /**

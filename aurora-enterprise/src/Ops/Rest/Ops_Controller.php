@@ -383,6 +383,62 @@ class Ops_Controller {
         ], 200 );
     }
 
+    public function repricer_rollback( WP_REST_Request $request ) {
+        global $wpdb;
+        $targetRunId = (int) ( $request['run_id'] ?? 0 );
+        if ( $targetRunId <= 0 ) {
+            return new WP_Error( 'aurora_repricer_rollback_bad_request', 'run_id required', [ 'status' => 400 ] );
+        }
+
+        $dup = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$wpdb->prefix}aurora_ops_runs WHERE op_key='repricer_rollback' AND status IN ('requested','running','partial') AND meta_json LIKE %s LIMIT 1",
+                '%"target_run_id":' . $targetRunId . '%'
+            )
+        );
+        if ( $dup ) {
+            error_log( sprintf( '[Aurora] repricer_rollback dedup target_run_id=%d run_id=%d', $targetRunId, (int) $dup ) );
+            return new WP_Error( 'aurora_repricer_rollback_duplicate', 'Rollback already pending for target run', [ 'status' => 409, 'run_id' => (int) $dup ] );
+        }
+
+        $payload = [
+            'target_run_id' => $targetRunId,
+            'dry_run'       => isset( $request['dry_run'] ) ? (bool) $request['dry_run'] : false,
+            'chunk_size'    => isset( $request['chunk_size'] ) ? (int) $request['chunk_size'] : 200,
+        ];
+
+        $now = current_time( 'mysql', true );
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'aurora_ops_runs',
+            [
+                'op_key'       => 'repricer_rollback',
+                'action_type'  => 'repricer_rollback',
+                'status'       => 'requested',
+                'requested_at' => $now,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+                'meta_json'    => wp_json_encode( $payload ),
+            ]
+        );
+        if ( false === $inserted ) {
+            return new WP_Error( 'aurora_repricer_rollback_insert_failed', 'Unable to create rollback run', [ 'status' => 500 ] );
+        }
+        $run_id = (int) $wpdb->insert_id;
+        $payload['run_id'] = $run_id;
+        $args = [
+            [
+                'run_id'  => $run_id,
+                'op_key'  => 'repricer_rollback',
+                'payload' => $payload,
+            ],
+        ];
+        if ( function_exists( 'as_enqueue_async_action' ) ) {
+            as_enqueue_async_action( 'aurora_ops_dispatch', $args, 'aurora' );
+        }
+        error_log( sprintf( '[Aurora] repricer_rollback scheduled run_id=%d target_run_id=%d', $run_id, $targetRunId ) );
+        return new WP_REST_Response( [ 'ok' => true, 'run_id' => $run_id, 'scheduled' => true ], 200 );
+    }
+
     public function repricer_preview( WP_REST_Request $request ) {
         $assignmentId = (int) ( $request['assignment_id'] ?? 0 );
         if ( $assignmentId <= 0 ) {
