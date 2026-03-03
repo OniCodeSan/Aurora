@@ -1,5 +1,8 @@
 scripts/
 wordpress/seed-products.php
 wordpress/seed-products-direct.php
+wordpress/aurora_e2e_*.php
+wordpress/aurora_test_*.php
+wordpress/repricer_filters_test.php
 retro-dosbox/retroarch/config/.cache/
 retro-dosbox/retroarch/config/.dbus/
