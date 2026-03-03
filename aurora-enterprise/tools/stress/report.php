@@ -93,21 +93,6 @@ function parse_tagged_metrics($metrics, $metricName) {
     return $out;
 }
 
-function to_ms($value, &$converted) {
-    if ($value === null) {
-        return null;
-    }
-    if (!is_numeric($value)) {
-        return null;
-    }
-    $v = (float) $value;
-    if ($v < 1000 && abs($v - round($v)) > 0.000001) {
-        $converted = true;
-        return $v * 1000;
-    }
-    return $v;
-}
-
 $pages = [
     'page_home_duration' => 'home',
     'page_category_duration' => 'category',
@@ -116,11 +101,12 @@ $pages = [
 ];
 
 $results = [];
-$timingConverted = false;
 foreach ($pages as $metric => $label) {
+    $p95 = metric($k6, $metric, 'p(95)');
+    $p99 = metric($k6, $metric, 'p(99)');
     $results[$label] = [
-        'p95' => to_ms(metric($k6, $metric, 'p(95)'), $timingConverted),
-        'p99' => to_ms(metric($k6, $metric, 'p(99)'), $timingConverted),
+        'p95' => is_numeric($p95) ? (float) $p95 : null,
+        'p99' => is_numeric($p99) ? (float) $p99 : null,
     ];
 }
 
@@ -318,9 +304,6 @@ $out[] = "ops_errors=" . $opsErrors;
 $out[] = "ops_errors_filtered=" . $opsErrorsFiltered;
 $out[] = "ops_profile=" . $opsProfile;
 $out[] = "timing_unit=ms";
-if ($timingConverted) {
-    $out[] = "timing_converted_from=s";
-}
 $out[] = "dead_queue=" . $deadQueue;
 $out[] = "feed_throughput_rows_per_sec=" . ($feedThroughput !== null ? $feedThroughput : 'n/a');
 if (!$pass) {
