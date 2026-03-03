@@ -31,7 +31,7 @@ Expected:
 Repricer-only stress:
 ```
 cd /Users/mariano/.openclaw/workspace/aurora-enterprise
-export OPS_PROFILE=repricer DURATION=2m RATE=10
+export OPS_PROFILE=repricer DURATION=2m RATE=10 WINDOW_MINUTES=5
 ./tools/stress/run.sh
 ```
 Expected in `tools/stress/out/<timestamp>/report.txt`:
