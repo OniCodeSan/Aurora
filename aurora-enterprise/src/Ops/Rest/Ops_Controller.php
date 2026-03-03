@@ -509,7 +509,8 @@ class Ops_Controller {
     public function repricer_scheduler_tick( WP_REST_Request $request ) {
         try {
             $scheduler = new \Aurora\Enterprise\Repricer\RepriceScheduler();
-            $scheduler->handle_tick();
+            $only = (int) ( $request->get_param( 'only_assignment_id' ) ?? 0 );
+            $scheduler->handle_tick( $only );
             $last = get_option( 'aurora_repricer_tick_last', [] );
             return new WP_REST_Response( [
                 'ok'                    => 1,

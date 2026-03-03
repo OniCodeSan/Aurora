@@ -31,7 +31,7 @@ class RepriceScheduler {
         }
     }
 
-    public function handle_tick() : void {
+    public function handle_tick( $onlyAssignmentId = 0 ) : void {
         $cursor   = (int) get_option( 'aurora_repricer_tick_cursor', 0 );
         $enqueued = 0;
         $skipped  = 0;
@@ -39,8 +39,20 @@ class RepriceScheduler {
         $lastError = null;
         $mode = 'interval';
         $inWindow = null;
+        $onlyId = (int) $onlyAssignmentId;
 
-        $assignments = $this->assignments->list_enabled_ordered( 500 );
+        if ( $onlyId > 0 ) {
+            $onlyAssignment = $this->assignments->get( $onlyId );
+            if ( ! $onlyAssignment || (int) ( $onlyAssignment['is_enabled'] ?? 0 ) !== 1 ) {
+                $lastError = sprintf( 'assignment_not_found_or_disabled:%d', $onlyId );
+                $this->persist_stats( $enqueued, $skipped, $skippedOutWindow, $cursor, $mode, $inWindow, $lastError );
+                return;
+            }
+            $assignments = [ $onlyAssignment ];
+            $cursor = $onlyId;
+        } else {
+            $assignments = $this->assignments->list_enabled_ordered( 500 );
+        }
         if ( empty( $assignments ) ) {
             $this->persist_stats( $enqueued, $skipped, $skippedOutWindow, $cursor, $mode, $inWindow, $lastError );
             return;
@@ -48,7 +60,7 @@ class RepriceScheduler {
 
         // Order already priority DESC, id ASC from repository; rotate by cursor
         $ordered = $assignments;
-        if ( $cursor > 0 ) {
+        if ( $onlyId <= 0 && $cursor > 0 ) {
             $startIndex = 0;
             foreach ( $assignments as $idx => $row ) {
                 if ( (int) $row['id'] === $cursor ) {
@@ -213,6 +225,7 @@ class RepriceScheduler {
             return false;
         }
         $runId = (int) $this->db->insert_id;
+        $payload['run_id'] = $runId;
         $args = [
             [
                 'run_id'  => $runId,

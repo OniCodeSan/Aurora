@@ -1,0 +1,17 @@
+RESULT=PASS
+http_error_rate=0.0012
+home_p95=320
+home_p99=680
+category_p95=410
+category_p99=910
+product_p95=520
+product_p99=1200
+search_p95=610
+search_p99=1400
+ops_errors=3
+ops_errors_filtered=0
+ops_profile=repricer
+timing_unit=ms
+timing_converted_from=s
+dead_queue=0
+feed_throughput_rows_per_sec=312.5
