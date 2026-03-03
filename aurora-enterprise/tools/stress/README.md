@@ -38,6 +38,7 @@ export RESET=1
 
 Outputs are written to `tools/stress/out/<timestamp>/`:
 - `k6.log`, `k6-summary.json`
+- `k6-error-samples.json` (only when HTTP errors are sampled)
 - `ops.log`
 - `metrics.json`
 - `report.txt`
@@ -49,6 +50,7 @@ Frontend (k6):
 - `RATE` (requests/sec, default `10`)
 - `VUS` (preallocated VUs, default `20`)
 - `MAX_VUS` (cap, default `50`)
+- `MAX_ERROR_SAMPLES` (default `20`, error samples captured to `k6-error-samples.json`)
 - `HOME_PATH`, `CATEGORY_PATH`, `PRODUCT_PATH`, `SEARCH_PATH`
 
 Backend ops:
@@ -57,6 +59,7 @@ Backend ops:
 - `OPS_PROFILE` (default `repricer`)
   - `repricer`: triggers only repricer scheduler tick + sweep-leases
   - `full`: original feed + rebuild + sweep-leases triggers
+  - `none`: frontend-only (ops disabled)
 - `ONLY_ASSIGNMENT_ID` (optional; when set in repricer profile, forces tick to use that assignment)
 - `OPS_DURATION_SECONDS` (default inferred from `DURATION`)
 - `OPS_TRIGGER_INTERVAL_SECONDS` (default `15`)
@@ -108,6 +111,20 @@ Full ops (feed + rebuild + sweep):
 export OPS_PROFILE=full
 ./tools/stress/run.sh
 ```
+
+Frontend-only (no ops):
+```bash
+export OPS_PROFILE=none
+./tools/stress/run.sh
+```
+
+## Precheck behavior
+Before the load starts, k6 performs a single request to each endpoint (home/category/product/search). If any returns `status >= 400` or `status == 0`, the run fails immediately with a clear `[precheck]` error in `k6.log`.
+
+## RESULT meaning
+`report.txt` is authoritative for PASS/FAIL. If k6 exits non-zero or precheck fails, the report is forced to `RESULT=FAIL` with:
+- `k6_exit_code`
+- `precheck_failed` and `precheck_message`
 
 ## SQL verification queries
 Use in your DB client (adjust `wp_` prefix if different):

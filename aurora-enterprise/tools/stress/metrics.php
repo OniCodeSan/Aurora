@@ -7,6 +7,7 @@ use Aurora\Enterprise\Support\Runtime_Stats;
 
 $windowMinutes = (int) (getenv('WINDOW_MINUTES') ?: 60);
 $windowMinutes = max(1, $windowMinutes);
+$testStartUtc = trim((string) (getenv('TEST_START_UTC') ?: ''));
 
 $prefix = $wpdb->prefix;
 $opsTable = $prefix . 'aurora_ops_runs';
@@ -22,21 +23,39 @@ $recentRuns = $wpdb->get_results(
     ARRAY_A
 ) ?: [];
 
-$summaryRows = $wpdb->get_results(
-    $wpdb->prepare(
-        "SELECT op_key, status, COUNT(*) AS total, SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, started_at, finished_at) ELSE 0 END) AS duration_seconds\n         FROM {$opsTable}\n         WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d MINUTE)\n         GROUP BY op_key, status",
-        $windowMinutes
-    ),
-    ARRAY_A
-) ?: [];
+$summaryRows = $testStartUtc !== ''
+    ? $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT op_key, status, COUNT(*) AS total, SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, started_at, finished_at) ELSE 0 END) AS duration_seconds\n         FROM {$opsTable}\n         WHERE created_at >= %s\n         GROUP BY op_key, status",
+            $testStartUtc
+        ),
+        ARRAY_A
+    )
+    : $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT op_key, status, COUNT(*) AS total, SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, started_at, finished_at) ELSE 0 END) AS duration_seconds\n         FROM {$opsTable}\n         WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d MINUTE)\n         GROUP BY op_key, status",
+            $windowMinutes
+        ),
+        ARRAY_A
+    );
+$summaryRows = $summaryRows ?: [];
 
-$summaryRowsFiltered = $wpdb->get_results(
-    $wpdb->prepare(
-        "SELECT op_key, status, COUNT(*) AS total, SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, started_at, finished_at) ELSE 0 END) AS duration_seconds\n         FROM {$opsTable}\n         WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d MINUTE)\n           AND op_key IN ('repricer_run','sweep_leases')\n         GROUP BY op_key, status",
-        $windowMinutes
-    ),
-    ARRAY_A
-) ?: [];
+$summaryRowsFiltered = $testStartUtc !== ''
+    ? $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT op_key, status, COUNT(*) AS total, SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, started_at, finished_at) ELSE 0 END) AS duration_seconds\n         FROM {$opsTable}\n         WHERE created_at >= %s\n           AND op_key IN ('repricer_run','sweep_leases')\n         GROUP BY op_key, status",
+            $testStartUtc
+        ),
+        ARRAY_A
+    )
+    : $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT op_key, status, COUNT(*) AS total, SUM(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, started_at, finished_at) ELSE 0 END) AS duration_seconds\n         FROM {$opsTable}\n         WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d MINUTE)\n           AND op_key IN ('repricer_run','sweep_leases')\n         GROUP BY op_key, status",
+            $windowMinutes
+        ),
+        ARRAY_A
+    );
+$summaryRowsFiltered = $summaryRowsFiltered ?: [];
 
 $opsSummary = [];
 foreach ($summaryRows as $row) {
