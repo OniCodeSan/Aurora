@@ -236,6 +236,13 @@
       render(basePollMs);
     };
 
+    const hasFocusedInput = () => {
+      const active = document.activeElement;
+      if (!active) return false;
+      if (!root.contains(active)) return false;
+      return ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName);
+    };
+
     const startCooldown = (buttonKey, seconds) => {
       if (!Number.isFinite(seconds) || seconds <= 0) return;
       state.cooldowns.set(buttonKey, seconds);
@@ -304,8 +311,8 @@
             </div>
           </section>
           <section class="aurora-card">
-            <h2>Rebuild</h2>
-            <label>Indexer
+            <h2>Indicizzatore catalogo</h2>
+            <label>Ambito indicizzazione
               <select id="aurora-rebuild-indexer">
                 <option value="all">all</option>
                 <option value="price">price</option>
@@ -424,7 +431,9 @@
         if (state.noticeType !== "error") {
           state.notice = "";
         }
-        render(basePollMs);
+        if (!hasFocusedInput()) {
+          render(basePollMs);
+        }
       },
       (error, nextPollMs) => {
         state.notice = `${error.message}. Next retry in ${Math.ceil(nextPollMs / 1000)}s.`;

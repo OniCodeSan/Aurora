@@ -34,8 +34,13 @@ class Ops_Page {
         }
 
         $ver = defined( 'AURORA_ENTERPRISE_VERSION' ) ? AURORA_ENTERPRISE_VERSION : '0.1.0';
-        wp_enqueue_style( 'aurora-ops-admin', plugins_url( 'assets/admin/css/aurora-admin.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], $ver );
-        wp_enqueue_script( 'aurora-ops-admin', plugins_url( 'assets/admin/js/aurora-admin.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [], $ver, true );
+        $cssPath = AURORA_ENTERPRISE_PLUGIN_DIR . 'assets/admin/css/aurora-admin.css';
+        $jsPath  = AURORA_ENTERPRISE_PLUGIN_DIR . 'assets/admin/js/aurora-admin.js';
+        $cssVer  = file_exists( $cssPath ) ? (string) filemtime( $cssPath ) : $ver;
+        $jsVer   = file_exists( $jsPath ) ? (string) filemtime( $jsPath ) : $ver;
+
+        wp_enqueue_style( 'aurora-ops-admin', plugins_url( 'assets/admin/css/aurora-admin.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], $cssVer );
+        wp_enqueue_script( 'aurora-ops-admin', plugins_url( 'assets/admin/js/aurora-admin.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [], $jsVer, true );
         wp_localize_script( 'aurora-ops-admin', 'auroraOpsAdmin', [
             'restBase'      => trailingslashit( rest_url( 'aurora/v1' ) ),
             'nonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',

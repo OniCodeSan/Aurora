@@ -1,304 +1,318 @@
-( function () {
-    const root = document.getElementById( 'aurora-enterprise-dashboard' );
-    if ( ! root ) {
+(function () {
+    const root = document.getElementById('aurora-enterprise-dashboard');
+    if (!root) {
         return;
     }
 
     const apiFetch = window.wp?.apiFetch;
-    if ( ! apiFetch ) {
-        root.innerHTML = '<p>wp-api-fetch non disponibile.</p>';
+    if (!apiFetch) {
+        root.innerHTML = '<div class="notice notice-error"><p>wp-api-fetch non disponibile.</p></div>';
         return;
     }
 
+    const cfg = window.auroraDashboard || {};
+    const esc = (value) =>
+        String(value ?? '').replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;',
+        }[char]));
+
     const state = {
         loading: true,
+        error: '',
         data: null,
-        error: null,
-        deadJobs: [],
-        deadLoading: true,
-        deadError: null,
-        deadQueue: '',
-        retrying: false,
-        totalShards: 0,
-    };
-
-    const renderSnapshotAlert = () => {
-        if ( ! state.data ) {
-            return '';
-        }
-        if ( state.data.snapshot?.aligned ) {
-            return '<div class="aurora-alert aurora-alert--ok">Snapshot cut allineato</div>';
-        }
-        return '<div class="aurora-alert aurora-alert--warn">Snapshot cut non allineato: feed bloccato finché price/stock/visibility non condividono la stessa versione.</div>';
-    };
-
-    const renderShardAlert = () => {
-        if ( ! state.data ) {
-            return '';
-        }
-        if ( state.data.snapshot?.pending_out_of_range && state.data.snapshot.pending_out_of_range > 0 ) {
-            return `<div class="aurora-alert aurora-alert--warn">Shard mismatch: ${ state.data.snapshot.pending_out_of_range } job fuori dal range configurato. Aggiorna aurora_total_shards o riallinea la coda.</div>`;
-        }
-        return '';
-    };
-
-    const fetchDashboard = () => {
-        return apiFetch( {
-            url: auroraDashboard.dashboardUrl,
-            headers: {
-                'X-WP-Nonce': auroraDashboard.nonce,
+        feedIntegrations: null,
+        feedSaving: false,
+        rebuilding: false,
+        feedForm: {
+            amazon: {
+                seller_id: '',
+                marketplace_id: '',
+                client_id: '',
+                client_secret: '',
+                refresh_token: '',
             },
-        } ).then( ( response ) => {
-            state.data = response;
-            state.totalShards = response?.channels?.price?.total_shards || 0;
+            ebay: {
+                merchant_id: '',
+                site_id: '',
+                app_id: '',
+                dev_id: '',
+                cert_id: '',
+                user_token: '',
+            },
+        },
+    };
+
+    const headers = () => ({
+        'X-WP-Nonce': cfg.nonce || '',
+    });
+
+    const fillFeedForm = (integrations) => {
+        const amazon = integrations?.amazon || {};
+        const ebay = integrations?.ebay || {};
+        state.feedForm = {
+            amazon: {
+                seller_id: String(amazon.seller_id || ''),
+                marketplace_id: String(amazon.marketplace_id || ''),
+                client_id: String(amazon.client_id || ''),
+                client_secret: '',
+                refresh_token: '',
+            },
+            ebay: {
+                merchant_id: String(ebay.merchant_id || ''),
+                site_id: String(ebay.site_id || ''),
+                app_id: String(ebay.app_id || ''),
+                dev_id: String(ebay.dev_id || ''),
+                cert_id: '',
+                user_token: '',
+            },
+        };
+    };
+
+    const fetchDashboard = () =>
+        apiFetch({
+            path: cfg.dashboardPath || '/aurora/v1/ops-ui-status',
+            headers: headers(),
+        }).then((response) => {
+            state.data = response || {};
+            state.error = '';
             return response;
-        } );
-    };
+        });
 
-    const fetchDeadJobs = ( queue = state.deadQueue ) => {
-        state.deadLoading = true;
-        state.deadError = null;
-        state.deadQueue = queue;
-        render();
-        const qs = queue ? `?queue=${ encodeURIComponent( queue ) }` : '';
-        const apiUrl = `${ auroraDashboard.restBase }queue/dead${ qs }`;
-        return apiFetch( {
-            url: apiUrl,
-            headers: { 'X-WP-Nonce': auroraDashboard.nonce },
-        } ).then( ( response ) => {
-            state.deadJobs = response?.jobs || [];
-            state.deadLoading = false;
-            render();
-        } ).catch( ( error ) => {
-            state.deadLoading = false;
-            state.deadError = error.message || 'Errore caricamento dead-letter';
-            render();
-        } );
-    };
+    const fetchFeedIntegrations = () =>
+        apiFetch({
+            path: cfg.feedIntegrationsPath || '/aurora/v1/feed/integrations',
+            headers: headers(),
+        }).then((response) => {
+            state.feedIntegrations = response?.integrations || null;
+            fillFeedForm(state.feedIntegrations);
+            return response;
+        });
 
-    const retryDead = () => {
-        if ( state.retrying ) {
+    const bindInput = (id, section, key) => {
+        const input = document.getElementById(id);
+        if (!input) {
             return;
         }
-        state.retrying = true;
+        input.addEventListener('input', (event) => {
+            state.feedForm[section][key] = String(event.target.value || '');
+        });
+    };
+
+    const saveIntegrations = () => {
+        if (state.feedSaving) {
+            return;
+        }
+        state.feedSaving = true;
         render();
-        const apiUrl = `${ auroraDashboard.restBase }queue/retry`;
-        apiFetch( {
-            url: apiUrl,
+
+        apiFetch({
+            path: cfg.feedIntegrationsPath || '/aurora/v1/feed/integrations',
             method: 'POST',
-            headers: { 'X-WP-Nonce': auroraDashboard.nonce },
+            headers: headers(),
             data: {
-                queue: state.deadQueue,
-                limit: 100,
+                integrations: state.feedForm,
             },
-        } ).then( () => {
-            return Promise.all( [ fetchDashboard(), fetchDeadJobs() ] );
-        } ).catch( ( error ) => {
-            window.alert( error.message || 'Errore retry dead-letter' );
-        } ).finally( () => {
-            state.retrying = false;
+        }).then((response) => {
+            state.feedIntegrations = response?.integrations || null;
+            fillFeedForm(state.feedIntegrations);
+            window.alert('Connessioni merchant salvate.');
+        }).catch((error) => {
+            window.alert(error?.message || 'Errore salvataggio connessioni merchant');
+        }).finally(() => {
+            state.feedSaving = false;
             render();
-        } );
+        });
+    };
+
+    const runRebuild = () => {
+        if (state.rebuilding) {
+            return;
+        }
+        state.rebuilding = true;
+        render();
+
+        apiFetch({
+            path: cfg.rebuildPath || '/aurora/v1/trigger/rebuild',
+            method: 'POST',
+            headers: headers(),
+            data: { indexer: 'all' },
+        }).then(() => {
+            window.alert('Rebuild avviato.');
+            return fetchDashboard();
+        }).catch((error) => {
+            window.alert(error?.message || 'Errore rebuild');
+        }).finally(() => {
+            state.rebuilding = false;
+            render();
+        });
+    };
+
+    const attachHandlers = () => {
+        const refreshButton = document.getElementById('aurora-refresh-dashboard');
+        if (refreshButton) {
+            refreshButton.addEventListener('click', () => {
+                state.loading = true;
+                render();
+                fetchDashboard().catch((error) => {
+                    state.error = error?.message || 'Errore caricamento status';
+                }).finally(() => {
+                    state.loading = false;
+                    render();
+                });
+            });
+        }
+
+        const rebuildButton = document.getElementById('aurora-run-rebuild');
+        if (rebuildButton) {
+            rebuildButton.addEventListener('click', runRebuild);
+        }
+
+        bindInput('aurora-amz-seller-id', 'amazon', 'seller_id');
+        bindInput('aurora-amz-marketplace-id', 'amazon', 'marketplace_id');
+        bindInput('aurora-amz-client-id', 'amazon', 'client_id');
+        bindInput('aurora-amz-client-secret', 'amazon', 'client_secret');
+        bindInput('aurora-amz-refresh-token', 'amazon', 'refresh_token');
+        bindInput('aurora-ebay-merchant-id', 'ebay', 'merchant_id');
+        bindInput('aurora-ebay-site-id', 'ebay', 'site_id');
+        bindInput('aurora-ebay-app-id', 'ebay', 'app_id');
+        bindInput('aurora-ebay-dev-id', 'ebay', 'dev_id');
+        bindInput('aurora-ebay-cert-id', 'ebay', 'cert_id');
+        bindInput('aurora-ebay-user-token', 'ebay', 'user_token');
+
+        const saveButton = document.getElementById('aurora-save-feed-integrations');
+        if (saveButton) {
+            saveButton.addEventListener('click', saveIntegrations);
+        }
     };
 
     const render = () => {
-        root.innerHTML = '';
-        const container = document.createElement( 'div' );
-        container.className = 'aurora-dashboard-grid';
-        if ( state.loading ) {
-            container.innerHTML = '<p>Caricamento dati…</p>';
-            root.appendChild( container );
-            return;
-        }
-        if ( state.error ) {
-            container.innerHTML = `<div class="notice notice-error"><p>${ state.error }</p></div>`;
-            root.appendChild( container );
-            return;
-        }
-        if ( ! state.data ) {
-            container.innerHTML = '<p>Nessun dato disponibile.</p>';
-            root.appendChild( container );
-            return;
-        }
+        const data = state.data || {};
+        const queue = data.queue || {};
+        const errors = data.ops_errors || {};
+        const incidents = data.incidents || {};
+        const summary = incidents.summary || {};
+        const lastError = data.last_error || {};
+        const timestamps = data.last_run_timestamps || {};
+        const runs = Array.isArray(data.recent_runs) ? data.recent_runs : [];
 
-        const snapshotAlert = renderSnapshotAlert();
-        const shardAlert = renderShardAlert();
+        const feed = state.feedIntegrations || {};
+        const amazon = feed.amazon || {};
+        const ebay = feed.ebay || {};
 
-        const queueCard = `
-            <div class="aurora-card">
-                <h2>Code</h2>
-                ${ snapshotAlert }
-                ${ shardAlert }
-                <ul>
-                    <li>Price: ${ state.data.queue.price }</li>
-                    <li>Stock: ${ state.data.queue.stock }</li>
-                    <li>Visibility: ${ state.data.queue.visibility }</li>
-                    <li>Feed: ${ state.data.queue.feed }</li>
-                    <li>Dead letter: ${ state.data.queue.dead }</li>
-                </ul>
+        const loadingHtml = state.loading ? '<div class="aurora-muted">Caricamento...</div>' : '';
+        const errorHtml = state.error
+            ? `<div class="notice notice-error inline"><p>${esc(state.error)}</p></div>`
+            : '';
+
+        root.innerHTML = `
+            ${errorHtml}
+            <div class="aurora-dashboard-toolbar">
+                <button class="button" id="aurora-refresh-dashboard">Refresh now</button>
+                ${loadingHtml}
             </div>
-        `;
-
-        const rebuildCard = `
-            <div class="aurora-card">
-                <h2>Ultimo rebuild</h2>
-                <p>Price: ${ state.data.lastRebuild.price || '—' }</p>
-                <p>Stock: ${ state.data.lastRebuild.stock || '—' }</p>
-                <p>Visibility: ${ state.data.lastRebuild.visibility || '—' }</p>
-                <button class="button button-primary" id="aurora-rebuild-all">Rebuild manuale</button>
+            <div class="aurora-dashboard-grid">
+                <div class="aurora-card">
+                    <h2>System health</h2>
+                    <p><strong>Status:</strong> ${esc(data.health?.status || 'WARN')}</p>
+                    <p><strong>Queue backlog:</strong> ${Number(queue.backlog_total || 0)}</p>
+                    <p><strong>Dead queue:</strong> ${Number(queue.dead || 0)}</p>
+                </div>
+                <div class="aurora-card">
+                    <h2>Incidents</h2>
+                    <p><strong>Errori (24h):</strong> ${Number(summary.errors_24h || errors.filtered || 0)}</p>
+                    <p><strong>Op impattate:</strong> ${Number(summary.unique_ops_impacted || 0)}</p>
+                    <p><strong>Ultimo incidente:</strong> ${esc(summary.last_incident_at || '-')}</p>
+                </div>
+                <div class="aurora-card">
+                    <h2>Ultimo errore</h2>
+                    <p><strong>Op:</strong> ${esc(lastError.op_key || '-')}</p>
+                    <p><strong>At:</strong> ${esc(lastError.created_at || '-')}</p>
+                    <p class="aurora-meta-note">${esc(lastError.message || 'Nessun errore recente.')}</p>
+                </div>
+                <div class="aurora-card">
+                    <h2>Azioni</h2>
+                    <button class="button button-primary" id="aurora-run-rebuild" ${state.rebuilding ? 'disabled' : ''}>
+                        ${state.rebuilding ? 'Avvio rebuild...' : 'Avvia rebuild'}
+                    </button>
+                    <p class="aurora-meta-note">Feed enqueue: ${esc(timestamps.feed_enqueue || '-')}</p>
+                    <p class="aurora-meta-note">Feed run: ${esc(timestamps.feed_run || '-')}</p>
+                </div>
             </div>
-        `;
 
-        const logsCard = `
-            <div class="aurora-card">
-                <h2>Job recenti</h2>
-                <ul>
-                    ${( state.data.logs || [] ).map( ( log ) => `<li><strong>${ log.indexer }</strong> – ${ log.message } (${ log.created_at })</li>` ).join( '' ) || '<li>Nessun log</li>'}
-                </ul>
+            <div class="aurora-card aurora-card--wide">
+                <h2>Connessioni feed marketplace</h2>
+                <p class="aurora-meta-note">Configura API merchant per Amazon ed eBay. I segreti salvati vengono mostrati solo mascherati.</p>
+                <div class="aurora-marketplace-grid">
+                    <div class="aurora-marketplace-col">
+                        <h3>Amazon</h3>
+                        <label>Seller ID <input type="text" id="aurora-amz-seller-id" value="${esc(state.feedForm.amazon.seller_id)}" /></label>
+                        <label>Marketplace ID <input type="text" id="aurora-amz-marketplace-id" value="${esc(state.feedForm.amazon.marketplace_id)}" /></label>
+                        <label>Client ID <input type="text" id="aurora-amz-client-id" value="${esc(state.feedForm.amazon.client_id)}" /></label>
+                        <label>Client secret <input type="password" id="aurora-amz-client-secret" value="" placeholder="${amazon.has_client_secret ? 'gia configurato' : 'inserisci secret'}" /></label>
+                        <label>Refresh token <input type="password" id="aurora-amz-refresh-token" value="" placeholder="${amazon.has_refresh_token ? 'gia configurato' : 'inserisci token'}" /></label>
+                        <p class="aurora-meta-note">Secret: ${esc(amazon.client_secret || '-')} | Token: ${esc(amazon.refresh_token || '-')}</p>
+                    </div>
+                    <div class="aurora-marketplace-col">
+                        <h3>eBay</h3>
+                        <label>Merchant ID <input type="text" id="aurora-ebay-merchant-id" value="${esc(state.feedForm.ebay.merchant_id)}" /></label>
+                        <label>Site ID <input type="text" id="aurora-ebay-site-id" value="${esc(state.feedForm.ebay.site_id)}" /></label>
+                        <label>App ID <input type="text" id="aurora-ebay-app-id" value="${esc(state.feedForm.ebay.app_id)}" /></label>
+                        <label>Dev ID <input type="text" id="aurora-ebay-dev-id" value="${esc(state.feedForm.ebay.dev_id)}" /></label>
+                        <label>Cert ID <input type="password" id="aurora-ebay-cert-id" value="" placeholder="${ebay.has_cert_id ? 'gia configurato' : 'inserisci cert'}" /></label>
+                        <label>User token <input type="password" id="aurora-ebay-user-token" value="" placeholder="${ebay.has_user_token ? 'gia configurato' : 'inserisci token'}" /></label>
+                        <p class="aurora-meta-note">Cert: ${esc(ebay.cert_id || '-')} | Token: ${esc(ebay.user_token || '-')}</p>
+                    </div>
+                </div>
+                <div class="aurora-actions">
+                    <button class="button button-primary" id="aurora-save-feed-integrations" ${state.feedSaving ? 'disabled' : ''}>
+                        ${state.feedSaving ? 'Salvataggio...' : 'Salva connessioni API feed'}
+                    </button>
+                    <span class="aurora-meta-note">Ultimo aggiornamento: ${esc(feed.updated_at || '-')}</span>
+                </div>
             </div>
-        `;
 
-        const cronRows = Object.entries( state.data.cron || {} ).map( ( [ key, cron ] ) => `
-            <tr data-cron-key="${ key }">
-                <td>${ cron.label }</td>
-                <td><input type="text" value="${ cron.interval }" class="aurora-cron-interval" /></td>
-                <td>
-                    <span class="aurora-status aurora-status--${ cron.color }">${ cron.status_label }</span>
-                    <select class="aurora-cron-status">
-                        ${ Object.entries( state.data.cronStatuses || {} ).map( ( [ statusKey, status ] ) => `
-                            <option value="${ statusKey }" ${ cron.status === statusKey ? 'selected' : '' }>${ status.label }</option>
-                        ` ).join( '' ) }
-                    </select>
-                </td>
-                <td>${ cron.last_run || '—' }</td>
-                <td><button class="button button-small aurora-cron-save">Salva</button></td>
-            </tr>
-        ` ).join( '' );
-
-        const cronCard = `
-            <div class="aurora-card">
-                <h2>Cron</h2>
-                <table class="aurora-cron-table">
+            <div class="aurora-card aurora-card--wide">
+                <h2>Run recenti</h2>
+                <table class="widefat striped">
                     <thead>
-                        <tr><th>Job</th><th>Interval</th><th>Status</th><th>Ultimo run</th><th>Azioni</th></tr>
+                        <tr>
+                            <th>ID</th>
+                            <th>Op</th>
+                            <th>Status</th>
+                            <th>Creato</th>
+                            <th>Messaggio</th>
+                        </tr>
                     </thead>
-                    <tbody>${ cronRows }</tbody>
+                    <tbody>
+                        ${runs.length ? runs.slice(0, 10).map((run) => `
+                            <tr>
+                                <td>${Number(run.id || 0)}</td>
+                                <td>${esc(run.op_key || '-')}</td>
+                                <td>${esc(run.status || '-')}</td>
+                                <td>${esc(run.created_at || '-')}</td>
+                                <td>${esc(run.message || run.error || '-')}</td>
+                            </tr>
+                        `).join('') : '<tr><td colspan="5">Nessun run recente.</td></tr>'}
+                    </tbody>
                 </table>
             </div>
         `;
 
-        const deadList = state.deadLoading
-            ? '<p>Caricamento dead-letter…</p>'
-            : state.deadError
-                ? `<p class="error">${ state.deadError }</p>`
-                : ( state.deadJobs.length
-                    ? `<ul>${ state.deadJobs.map( ( job ) => `
-                        <li>
-                            <strong>${ job.queue }</strong> – ${ job.id }<br />
-                            <em>${ job.failed_at || '' }</em><br />
-                            <small>${ job.error || '' }</small>
-                        </li>
-                    ` ).join( '' ) }</ul>`
-                    : '<p>Nessun job dead.</p>' );
-
-        const deadCard = `
-            <div class="aurora-card">
-                <h2>Dead letter</h2>
-                <label>
-                    Queue
-                    <select id="aurora-dead-queue">
-                        <option value="">Tutte</option>
-                        <option value="price" ${ state.deadQueue === 'price' ? 'selected' : '' }>Price</option>
-                        <option value="stock" ${ state.deadQueue === 'stock' ? 'selected' : '' }>Stock</option>
-                        <option value="visibility" ${ state.deadQueue === 'visibility' ? 'selected' : '' }>Visibility</option>
-                        <option value="feed" ${ state.deadQueue === 'feed' ? 'selected' : '' }>Feed</option>
-                    </select>
-                </label>
-                <button class="button" id="aurora-retry-dead" ${ state.retrying ? 'disabled' : '' }>
-                    ${ state.retrying ? 'Retry in corso…' : 'Retry 100' }
-                </button>
-                ${ deadList }
-            </div>
-        `;
-
-        container.innerHTML = [ queueCard, rebuildCard, logsCard, cronCard, deadCard ].join( '' );
-        root.appendChild( container );
         attachHandlers();
     };
 
-    const attachHandlers = () => {
-        const rebuildBtn = document.getElementById( 'aurora-rebuild-all' );
-        if ( rebuildBtn ) {
-            rebuildBtn.addEventListener( 'click', () => {
-                rebuildBtn.disabled = true;
-                rebuildBtn.innerText = 'In esecuzione…';
-                apiFetch( {
-                    path: '/aurora/v1/rebuild',
-                    method: 'POST',
-                    headers: {
-                        'X-WP-Nonce': auroraDashboard.nonce,
-                    },
-                } ).then( () => {
-                    rebuildBtn.innerText = 'Avviato';
-                } ).catch( ( error ) => {
-                    window.alert( error.message || 'Errore rebuild' );
-                } ).finally( () => {
-                    rebuildBtn.disabled = false;
-                } );
-            } );
+    render();
+
+    Promise.allSettled([fetchDashboard(), fetchFeedIntegrations()]).then((results) => {
+        const dashboardFail = results[0]?.status === 'rejected';
+        if (dashboardFail) {
+            state.error = results[0].reason?.message || 'Errore caricamento status';
         }
-
-        root.querySelectorAll( '.aurora-cron-save' ).forEach( ( button ) => {
-            button.addEventListener( 'click', ( event ) => {
-                const row = event.target.closest( 'tr[data-cron-key]' );
-                const key = row?.dataset?.cronKey;
-                if ( ! key ) {
-                    return;
-                }
-                const intervalInput = row.querySelector( '.aurora-cron-interval' );
-                const statusSelect = row.querySelector( '.aurora-cron-status' );
-                button.disabled = true;
-                apiFetch( {
-                    path: '/aurora/v1/cron',
-                    method: 'POST',
-                    headers: { 'X-WP-Nonce': auroraDashboard.nonce },
-                    data: {
-                        key,
-                        interval: intervalInput?.value || '',
-                        status: statusSelect?.value || 'processed',
-                    },
-                } ).then( ( cronData ) => {
-                    state.data.cron = cronData;
-                    render();
-                } ).catch( ( error ) => {
-                    window.alert( error.message || 'Errore salvataggio cron' );
-                } ).finally( () => {
-                    button.disabled = false;
-                } );
-            } );
-        } );
-
-        const queueSelect = document.getElementById( 'aurora-dead-queue' );
-        if ( queueSelect ) {
-            queueSelect.addEventListener( 'change', ( event ) => {
-                const queue = event.target.value;
-                fetchDeadJobs( queue );
-            } );
-        }
-
-        const retryBtn = document.getElementById( 'aurora-retry-dead' );
-        if ( retryBtn ) {
-            retryBtn.addEventListener( 'click', retryDead );
-        }
-    };
-
-    // bootstrap fetches
-    Promise.all( [ fetchDashboard(), fetchDeadJobs() ] ).then( () => {
         state.loading = false;
         render();
-    } ).catch( ( error ) => {
-        state.loading = false;
-        state.error = error.message || 'Errore caricamento dashboard';
-        render();
-    } );
-}() );
+    });
+})();

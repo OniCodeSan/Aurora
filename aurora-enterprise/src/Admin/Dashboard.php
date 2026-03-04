@@ -20,8 +20,8 @@ class Dashboard {
 
         add_submenu_page(
             'aurora-project',
-            __( 'Aurora Enterprise Indexer', 'aurora-enterprise' ),
-            __( 'Indexer', 'aurora-enterprise' ),
+            __( 'Aurora Feed Hub', 'aurora-enterprise' ),
+            __( 'Feed Hub', 'aurora-enterprise' ),
             'manage_woocommerce',
             'aurora-enterprise-indexer',
             [ $this, 'render_page' ]
@@ -33,25 +33,29 @@ class Dashboard {
             return;
         }
         echo '<div class="wrap aurora-enterprise-admin">';
-        echo '<h1>' . esc_html__( 'Aurora Enterprise – Stato indicizzazione', 'aurora-enterprise' ) . '</h1>';
+        echo '<h1>' . esc_html__( 'Aurora Enterprise - Feed Hub', 'aurora-enterprise' ) . '</h1>';
         echo '<div id="aurora-enterprise-dashboard"></div>';
         echo '</div>';
     }
 
     public function enqueue_assets( string $hook ) : void {
-        $allowed = [
-            'woocommerce_page_aurora-enterprise-indexer',
-            'aurora-project_page_aurora-enterprise-indexer',
-        ];
-        if ( ! in_array( $hook, $allowed, true ) ) {
+        if ( strpos( $hook, 'aurora-enterprise-indexer' ) === false ) {
             return;
         }
-        wp_enqueue_style( 'aurora-enterprise-admin', plugins_url( 'assets/admin/css/dashboard.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], AURORA_ENTERPRISE_VERSION );
-        wp_enqueue_script( 'aurora-enterprise-admin', plugins_url( 'assets/admin/js/dashboard.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [ 'wp-element', 'wp-api-fetch' ], AURORA_ENTERPRISE_VERSION, true );
+        $ver = defined( 'AURORA_ENTERPRISE_VERSION' ) ? AURORA_ENTERPRISE_VERSION : '0.1.0';
+        $cssPath = AURORA_ENTERPRISE_PLUGIN_DIR . 'assets/admin/css/dashboard.css';
+        $jsPath  = AURORA_ENTERPRISE_PLUGIN_DIR . 'assets/admin/js/dashboard.js';
+        $cssVer  = file_exists( $cssPath ) ? (string) filemtime( $cssPath ) : $ver;
+        $jsVer   = file_exists( $jsPath ) ? (string) filemtime( $jsPath ) : $ver;
+
+        wp_enqueue_style( 'aurora-enterprise-admin', plugins_url( 'assets/admin/css/dashboard.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], $cssVer );
+        wp_enqueue_script( 'aurora-enterprise-admin', plugins_url( 'assets/admin/js/dashboard.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [ 'wp-element', 'wp-api-fetch' ], $jsVer, true );
         wp_localize_script( 'aurora-enterprise-admin', 'auroraDashboard', [
             'restBase'      => trailingslashit( rest_url( 'aurora/v1' ) ),
-            'dashboardUrl'  => rest_url( 'aurora/v1/dashboard' ),
+            'dashboardPath' => '/aurora/v1/ops-ui-status',
+            'rebuildPath'   => '/aurora/v1/trigger/rebuild',
             'nonce'         => wp_create_nonce( 'wp_rest' ),
+            'feedIntegrationsPath' => '/aurora/v1/feed/integrations',
         ] );
     }
 }

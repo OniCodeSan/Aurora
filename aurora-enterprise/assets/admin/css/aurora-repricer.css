@@ -71,6 +71,30 @@
   margin: 0 0 12px;
 }
 
+.aurora-repricer-nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+
+.aurora-repricer-nav a {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid #dcdcde;
+  background: #fff;
+  text-decoration: none;
+  font-size: 12px;
+  color: #1d2327;
+}
+
+.aurora-repricer-nav a:hover,
+.aurora-repricer-nav a:focus {
+  border-color: #2271b1;
+  color: #135e96;
+}
+
 .aurora-repricer-overview {
   background: #fff;
   border: 1px solid #dcdcde;
@@ -181,7 +205,7 @@
 .aurora-repricer-field select,
 .aurora-repricer-field input[type="text"] {
   width: 100%;
-  max-width: 280px;
+  max-width: 360px;
 }
 
 #aurora-rule-editor .aurora-repricer-field input[type="number"],
@@ -189,6 +213,10 @@
 #aurora-rule-editor .aurora-repricer-field input[type="text"],
 #aurora-rule-editor .aurora-repricer-field input[type="datetime-local"] {
   max-width: none;
+}
+
+#aurora-rule-editor .aurora-repricer-field select[multiple] {
+  min-height: 136px;
 }
 
 #aurora-rule-editor h3 {

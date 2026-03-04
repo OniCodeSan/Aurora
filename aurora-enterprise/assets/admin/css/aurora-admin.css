@@ -80,7 +80,30 @@
 }
 
 .aurora-card input[type="number"],
-.aurora-card select {
+.aurora-card select,
+.aurora-card input[type="text"],
+.aurora-card input[type="password"] {
   width: 100%;
-  max-width: 260px;
+  max-width: 360px;
+}
+
+.aurora-card--wide {
+  margin-bottom: 12px;
+}
+
+.aurora-marketplace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.aurora-marketplace-col h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+@media (max-width: 960px) {
+  .aurora-marketplace-grid {
+    grid-template-columns: 1fr;
+  }
 }

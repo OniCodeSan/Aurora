@@ -113,6 +113,15 @@
       end_at: null,
     },
   });
+  const defaultRuleOptions = () => ({
+    categories: [],
+    brands: [],
+    product_types: [],
+    suppliers: [],
+    lines: [],
+    products: [],
+    brand_taxonomy: null,
+  });
 
   const state = {
     data: null,
@@ -154,7 +163,10 @@
       draft: defaultRuleDraft(),
       preview: null,
       loaded: false,
+      options: defaultRuleOptions(),
+      optionsLoaded: false,
     },
+    lastRenderFingerprint: "",
   };
 
   const esc = (value) =>
@@ -162,6 +174,12 @@
 
   const route = (key) => String(routes[key] || "").replace(/^\/+/, "");
   const routeWithId = (key, id) => route(key).replace("%id%", encodeURIComponent(String(id || 0)));
+  const computeFingerprint = (data) =>
+    JSON.stringify({
+      health: data?.health?.status || "WARN",
+      wpCron: !!data?.config?.wp_cron_enabled,
+      repricer: data?.repricer || {},
+    });
 
   const showNotice = (type, message) => {
     if (!noticesRoot) return;
@@ -385,7 +403,7 @@
     const errorClass = healthStatus === "ERROR" || healthStatus === "FAIL" ? " is-error" : "";
 
     return `
-      <section class="aurora-repricer-overview${errorClass}">
+      <section class="aurora-repricer-overview${errorClass}" id="aurora-overview">
         <h2>System Overview</h2>
         <div class="aurora-repricer-overview-grid">
           <article class="aurora-repricer-card">
@@ -451,7 +469,7 @@
     const progressValue = progressStatus === "success" ? 100 : (progressStatus === "running" ? 55 : (progressStatus === "requested" ? 15 : (progressStatus === "partial" ? 80 : (progressStatus === "error" ? 100 : 0))));
 
     return `
-      <section class="aurora-repricer-section">
+      <section class="aurora-repricer-section" id="aurora-guided-run">
         <h2>Esegui repricing</h2>
         <p class="aurora-repricer-help">Flusso guidato: seleziona assignment, scegli modalità, poi avvia run asincrono.</p>
 
@@ -521,13 +539,13 @@
     const run = repricer.last_run || null;
     if (!run) {
       return `
-        <section class="aurora-repricer-section"><h2>Run details</h2><p class="aurora-repricer-empty">Nessun run disponibile.</p></section>
+        <section class="aurora-repricer-section" id="aurora-run-details"><h2>Run details</h2><p class="aurora-repricer-empty">Nessun run disponibile.</p></section>
       `;
     }
     const progress = repricer.progress || null;
     const mapped = humanizeError(run.error || run.message || "");
     return `
-      <section class="aurora-repricer-section">
+      <section class="aurora-repricer-section" id="aurora-run-details">
         <h2>Run details</h2>
         <div class="aurora-repricer-grid-2">
           <div class="aurora-repricer-card">
@@ -630,7 +648,7 @@
     const scheduler = repricer.scheduler || {};
     const mapped = humanizeError(scheduler.last_error || "");
     return `
-      <section class="aurora-repricer-section">
+      <section class="aurora-repricer-section" id="aurora-scheduler">
         <h2>Scheduler</h2>
         <div class="aurora-repricer-grid-2">
           <div class="aurora-repricer-card">
@@ -679,7 +697,7 @@
     }).join("");
 
     return `
-      <section class="aurora-repricer-section">
+      <section class="aurora-repricer-section" id="aurora-assignments">
         <h2>Assignment</h2>
         <div class="aurora-repricer-actions" style="margin-bottom:8px;">
           <span class="aurora-repricer-help">Enabled: ${esc(repricer.enabled_assignments_count || 0)} | Queued runs: ${esc(repricer.queued_runs_count || 0)} | Rollback queued: ${esc(repricer.rollback_queue_count || 0)}</span>
@@ -735,6 +753,30 @@
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
 
+  const parseProductIdsCsv = (value) => csvToIntArray(value);
+
+  const addProductIdToCsv = (value, productId) => {
+    const ids = parseProductIdsCsv(value);
+    const id = Number(productId || 0);
+    if (id > 0 && !ids.includes(id)) {
+      ids.push(id);
+    }
+    return ids.join(",");
+  };
+
+  const collectMultiValues = (selectNode) => {
+    if (!selectNode || !selectNode.options) {
+      return [];
+    }
+    const values = [];
+    Array.from(selectNode.options).forEach((opt) => {
+      if (opt.selected) {
+        values.push(String(opt.value));
+      }
+    });
+    return values;
+  };
+
   const datetimeInputValue = (value) => {
     if (!value) return "";
     const text = String(value).replace(" ", "T");
@@ -786,6 +828,8 @@
   const buildRuleEditorSection = () => {
     const rules = Array.isArray(state.rules.items) ? state.rules.items : [];
     const draft = state.rules.draft || defaultRuleDraft();
+    const scope = draft.scope || {};
+    const ruleOptions = state.rules.options || defaultRuleOptions();
     const selectedId = Number(state.rules.selectedId || 0);
     const preview = state.rules.preview;
     const previewText =
@@ -797,6 +841,37 @@
       const value = getRuleField(path);
       return value === null || value === undefined ? "" : String(value);
     };
+
+    const selectedIntSet = (items) => new Set((Array.isArray(items) ? items : []).map((v) => String(Number(v || 0))).filter((v) => v !== "0"));
+    const selectedTextSet = (items) => new Set((Array.isArray(items) ? items : []).map((v) => String(v)));
+    const selectedCategories = selectedIntSet(scope.category_ids);
+    const selectedBrands = selectedIntSet(scope.brand_ids);
+    const selectedSuppliers = selectedTextSet(scope.supplier_ids);
+    const selectedProductTypes = selectedTextSet(scope.product_type);
+    const selectedLines = selectedTextSet(scope.line);
+    const productIdsCsv = (Array.isArray(scope.product_ids) ? scope.product_ids : []).join(",");
+
+    const renderIdOptions = (items, selectedSet) =>
+      (Array.isArray(items) ? items : [])
+        .map((item) => {
+          const id = Number(item?.id || 0);
+          if (id <= 0) return "";
+          const name = String(item?.name || item?.label || `#${id}`);
+          const selected = selectedSet.has(String(id)) ? "selected" : "";
+          return `<option value="${esc(id)}" ${selected}>${esc(name)} (#${esc(id)})</option>`;
+        })
+        .join("");
+
+    const renderTextOptions = (items, selectedSet) =>
+      (Array.isArray(items) ? items : [])
+        .map((item) => {
+          const value = String(item?.value || "");
+          if (!value) return "";
+          const label = String(item?.label || value);
+          const selected = selectedSet.has(value) ? "selected" : "";
+          return `<option value="${esc(value)}" ${selected}>${esc(label)}</option>`;
+        })
+        .join("");
 
     return `
       <section class="aurora-repricer-section" id="aurora-rule-editor">
@@ -842,24 +917,56 @@
 
         <h3>Scope</h3>
         <div class="aurora-repricer-grid">
-          <div class="aurora-repricer-field"><label>Product IDs (csv)</label><input type="text" data-rule-field="scope.product_ids" data-rule-type="csv-int" value="${esc(
-            (getRuleField("scope.product_ids") || []).join(",")
-          )}"></div>
-          <div class="aurora-repricer-field"><label>Category IDs (csv)</label><input type="text" data-rule-field="scope.category_ids" data-rule-type="csv-int" value="${esc(
-            (getRuleField("scope.category_ids") || []).join(",")
-          )}"></div>
-          <div class="aurora-repricer-field"><label>Brand terms (csv)</label><input type="text" data-rule-field="scope.brand_terms" data-rule-type="csv-text" value="${esc(
-            (getRuleField("scope.brand_terms") || []).join(",")
-          )}"></div>
-          <div class="aurora-repricer-field"><label>Supplier IDs (csv)</label><input type="text" data-rule-field="scope.supplier_ids" data-rule-type="csv-text" value="${esc(
-            (getRuleField("scope.supplier_ids") || []).join(",")
-          )}"></div>
-          <div class="aurora-repricer-field"><label>Product type (csv)</label><input type="text" data-rule-field="scope.product_type" data-rule-type="csv-text" value="${esc(
-            (getRuleField("scope.product_type") || []).join(",")
-          )}"></div>
-          <div class="aurora-repricer-field"><label>Line (csv)</label><input type="text" data-rule-field="scope.line" data-rule-type="csv-text" value="${esc(
-            (getRuleField("scope.line") || []).join(",")
-          )}"></div>
+          <div class="aurora-repricer-field">
+            <label>Product IDs (separati da virgola)</label>
+            <input id="aurora-rule-product-ids" type="text" data-rule-field="scope.product_ids" data-rule-type="csv-int" value="${esc(productIdsCsv)}" placeholder="es. 107221,207222">
+            <p class="aurora-repricer-help">Puoi aggiungere piu ID manualmente oppure dal menu prodotto.</p>
+          </div>
+          <div class="aurora-repricer-field">
+            <label for="aurora-rule-product-pick">Aggiungi prodotto dal sistema</label>
+            <div class="aurora-repricer-actions">
+              <select id="aurora-rule-product-pick">
+                <option value="">Seleziona prodotto...</option>
+                ${renderTextOptions(
+                  (ruleOptions.products || []).map((row) => ({ value: String(row.id || ""), label: row.label || "" })),
+                  new Set()
+                )}
+              </select>
+              <button type="button" class="button button-small" id="aurora-rule-product-add">Aggiungi ID</button>
+            </div>
+          </div>
+          <div class="aurora-repricer-field">
+            <label>Categorie prodotto</label>
+            <select multiple size="6" data-rule-field="scope.category_ids" data-rule-type="multi-int">
+              ${renderIdOptions(ruleOptions.categories, selectedCategories)}
+            </select>
+            <p class="aurora-repricer-help">Usa Cmd/Ctrl per selezione multipla.</p>
+          </div>
+          <div class="aurora-repricer-field">
+            <label>Brand</label>
+            <select multiple size="6" data-rule-field="scope.brand_ids" data-rule-type="multi-int">
+              ${renderIdOptions(ruleOptions.brands, selectedBrands)}
+            </select>
+          </div>
+          <div class="aurora-repricer-field">
+            <label>Supplier IDs</label>
+            <select multiple size="6" data-rule-field="scope.supplier_ids" data-rule-type="multi-text">
+              ${renderTextOptions(ruleOptions.suppliers, selectedSuppliers)}
+            </select>
+          </div>
+          <div class="aurora-repricer-field">
+            <label>Product type</label>
+            <select multiple size="6" data-rule-field="scope.product_type" data-rule-type="multi-text">
+              ${renderTextOptions(ruleOptions.product_types, selectedProductTypes)}
+            </select>
+          </div>
+          <div class="aurora-repricer-field">
+            <label>Linea (meta ERP _aurora_line)</label>
+            <select multiple size="6" data-rule-field="scope.line" data-rule-type="multi-text">
+              ${renderTextOptions(ruleOptions.lines, selectedLines)}
+            </select>
+            <p class="aurora-repricer-help">Linea identifica il segmento ERP del prodotto.</p>
+          </div>
           <div class="aurora-repricer-field"><label>ERP stock</label><select data-rule-field="scope.erp_stock_condition"><option value="any" ${
             getRuleField("scope.erp_stock_condition") === "any" ? "selected" : ""
           }>any</option><option value="eq_0" ${
@@ -1024,6 +1131,63 @@
     `;
   };
 
+  const buildRulesSavedSection = () => {
+    const rules = Array.isArray(state.rules.items) ? state.rules.items : [];
+    const rows = rules
+      .map((rule) => {
+        const id = Number(rule?.id || 0);
+        const enabled = !!rule?.enabled;
+        const exclusive = !!rule?.exclusive;
+        const status = enabled ? "attiva" : "disattiva";
+        const statusClass = enabled ? "status-success" : "status-error";
+        return `<tr>
+          <td class="num">${esc(id)}</td>
+          <td>${esc(rule?.name || "-")}</td>
+          <td class="num">${esc(rule?.priority ?? "-")}</td>
+          <td><span class="aurora-repricer-status-pill ${statusClass}">${esc(status)}</span></td>
+          <td>${exclusive ? "Sì" : "No"}</td>
+          <td>${esc(rule?.updated_at || "-")}</td>
+          <td><button type="button" class="button button-small" data-rule-open-id="${esc(id)}">Apri nell'editor</button></td>
+        </tr>`;
+      })
+      .join("");
+
+    return `
+      <section class="aurora-repricer-section" id="aurora-rules-saved">
+        <h2>Regole salvate</h2>
+        <p class="aurora-repricer-help">Totale regole: <strong>${esc(rules.length)}</strong>. Usa "Apri nell'editor" per modificare velocemente.</p>
+        <table class="widefat striped aurora-repricer-table">
+          <thead>
+            <tr>
+              <th class="num">ID</th>
+              <th>Nome</th>
+              <th class="num">Priorità</th>
+              <th>Stato</th>
+              <th>Esclusiva</th>
+              <th>Aggiornata</th>
+              <th>Azione</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="7" class="aurora-repricer-empty">Nessuna regola salvata.</td></tr>'}</tbody>
+        </table>
+      </section>
+    `;
+  };
+
+  const buildSectionNav = () => `
+    <nav class="aurora-repricer-nav" aria-label="Navigazione scheda repricer">
+      <a href="#aurora-overview">Overview</a>
+      <a href="#aurora-guided-run">Esegui</a>
+      <a href="#aurora-rule-editor">Regole</a>
+      <a href="#aurora-rules-saved">Regole salvate</a>
+      <a href="#aurora-run-details">Run</a>
+      <a href="#aurora-decisioni">Decisioni</a>
+      <a href="#aurora-scheduler">Scheduler</a>
+      <a href="#aurora-assignments">Assignment</a>
+      <a href="#aurora-rollback-zone">Rollback</a>
+    </nav>
+  `;
+
   const loadRules = async (force) => {
     if (state.rules.loaded && !force) return;
     try {
@@ -1039,6 +1203,26 @@
       }
     } catch (err) {
       showNotice("warning", err.message || "Impossibile caricare le regole repricer.");
+    }
+  };
+
+  const loadRuleOptions = async (force) => {
+    if (state.rules.optionsLoaded && !force) return;
+    try {
+      const response = await apiFetch(route("ruleOptions"), "GET", undefined, { lockOnAuth: true });
+      const raw = response?.options || {};
+      state.rules.options = {
+        categories: Array.isArray(raw.categories) ? raw.categories : [],
+        brands: Array.isArray(raw.brands) ? raw.brands : [],
+        product_types: Array.isArray(raw.product_types) ? raw.product_types : [],
+        suppliers: Array.isArray(raw.suppliers) ? raw.suppliers : [],
+        lines: Array.isArray(raw.lines) ? raw.lines : [],
+        products: Array.isArray(raw.products) ? raw.products : [],
+        brand_taxonomy: raw.brand_taxonomy || null,
+      };
+      state.rules.optionsLoaded = true;
+    } catch (err) {
+      showNotice("warning", err.message || "Impossibile caricare le opzioni di scope.");
     }
   };
 
@@ -1070,15 +1254,18 @@
 
     root.innerHTML = `
       ${renderWarnings(data)}
+      ${buildSectionNav()}
       ${buildOverview(repricer, data.health?.status || "WARN")}
       ${buildGuidedRun(repricer)}
       ${buildRuleEditorSection()}
+      ${buildRulesSavedSection()}
       ${buildRunDetails(repricer)}
       ${buildDecisionSection(repricer)}
       ${buildSchedulerSection(repricer)}
       ${buildAssignmentsSection(repricer)}
       ${buildRollbackSection(repricer)}
     `;
+    state.lastRenderFingerprint = computeFingerprint(data);
 
     bindInteractions(repricer);
     bindDetailsState();
@@ -1097,6 +1284,17 @@
         render();
       });
     }
+
+    root.querySelectorAll(".aurora-repricer-nav a").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        const target = link.getAttribute("href");
+        if (!target) return;
+        const node = document.querySelector(target);
+        if (!node) return;
+        node.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
 
     root.querySelectorAll('input[name="repricer_mode"]').forEach((radio) => {
       radio.addEventListener("change", () => {
@@ -1281,6 +1479,26 @@
       });
     }
 
+    root.querySelectorAll("[data-rule-open-id]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = Number(button.getAttribute("data-rule-open-id") || 0);
+        if (id <= 0) return;
+        try {
+          const row = await apiFetch(routeWithId("ruleGet", id), "GET", undefined, { lockOnAuth: true });
+          state.rules.selectedId = id;
+          state.rules.preview = null;
+          state.rules.draft = normalizeRuleFromApi(row);
+          render();
+          const editor = document.getElementById("aurora-rule-editor");
+          if (editor) {
+            editor.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        } catch (err) {
+          showNotice("warning", err.message || "Impossibile aprire la regola selezionata.");
+        }
+      });
+    });
+
     const ruleNewBtn = document.getElementById("aurora-rule-new");
     if (ruleNewBtn) {
       ruleNewBtn.addEventListener("click", () => {
@@ -1288,6 +1506,24 @@
         state.rules.preview = null;
         state.rules.draft = defaultRuleDraft();
         render();
+      });
+    }
+
+    const productAddBtn = document.getElementById("aurora-rule-product-add");
+    if (productAddBtn) {
+      productAddBtn.addEventListener("click", () => {
+        const picker = document.getElementById("aurora-rule-product-pick");
+        const productIdsInput = document.getElementById("aurora-rule-product-ids");
+        const selectedValue = picker ? Number(picker.value || 0) : 0;
+        if (!productIdsInput || selectedValue <= 0) {
+          return;
+        }
+        const nextCsv = addProductIdToCsv(productIdsInput.value, selectedValue);
+        productIdsInput.value = nextCsv;
+        setRuleField("scope.product_ids", parseProductIdsCsv(nextCsv));
+        if (picker) {
+          picker.value = "";
+        }
       });
     }
 
@@ -1309,6 +1545,10 @@
           value = csvToIntArray(input.value);
         } else if (type === "csv-text") {
           value = csvToTextArray(input.value);
+        } else if (type === "multi-int") {
+          value = collectMultiValues(input).map((item) => Number(item || 0)).filter((item) => item > 0);
+        } else if (type === "multi-text") {
+          value = collectMultiValues(input).map((item) => String(item || "").trim()).filter((item) => item.length > 0);
         } else if (type === "datetime") {
           value = datetimeApiValue(input.value);
         }
@@ -1435,7 +1675,13 @@
       state.data = data;
       state.authFailures = 0;
       state.pollDelay = basePollMs;
+      const nextFingerprint = computeFingerprint(data);
       if (isInteracting() || hasFocusedControl()) {
+        setHealthBadge(data.health?.status || "WARN");
+        if (lastUpdate) {
+          lastUpdate.textContent = data.generated_at_utc || "-";
+        }
+      } else if (nextFingerprint === state.lastRenderFingerprint) {
         setHealthBadge(data.health?.status || "WARN");
         if (lastUpdate) {
           lastUpdate.textContent = data.generated_at_utc || "-";
@@ -1510,7 +1756,7 @@
     );
   });
 
-  loadRules(true).finally(() => {
+  Promise.all([loadRules(true), loadRuleOptions(true)]).finally(() => {
     refreshStatus();
   });
 })();

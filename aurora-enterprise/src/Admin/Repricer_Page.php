@@ -78,6 +78,7 @@ class Repricer_Page {
                 'ruleCreate'=> 'repricer/rules',
                 'ruleUpdate'=> 'repricer/rules/%id%',
                 'rulePreview'=> 'repricer/rules/%id%/preview-scope',
+                'ruleOptions'=> 'repricer/rules/options',
             ],
         ] );
     }
