@@ -190,6 +190,10 @@ class RepriceRunManager {
             $selectedCount = count( $ids );
 
             if ( $selectedCount === 0 ) {
+                if ( $processed > 0 || $selected > 0 || $decisionsWritten > 0 ) {
+                    $this->complete( $runId, $owner, $processed, $updated, $counters, $selected, $decisionsWritten, $startedAt, $config );
+                    return;
+                }
                 $this->update_progress( $runId, [
                     'status'            => 'failed',
                     'processed_count'   => $processed,

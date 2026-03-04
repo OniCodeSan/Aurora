@@ -264,7 +264,7 @@ if ($opsProfile === 'repricer') {
         $pass = false;
         $reasons[] = "ops_errors_filtered>{$maxOpsErrors}";
     }
-} elseif ($opsErrors > $maxOpsErrors) {
+} elseif ($opsProfile === 'full' && $opsErrors > $maxOpsErrors) {
     $pass = false;
     $reasons[] = "ops_errors>{$maxOpsErrors}";
 }

@@ -13,6 +13,7 @@ use WP_REST_Response;
 use WP_Error;
 
 class Ops_Controller {
+    private const FEED_INTEGRATIONS_OPTION = 'aurora_feed_marketplace_integrations';
     private System_Status_Provider $provider;
     private Ops_Run_Manager $runs;
 
@@ -128,6 +129,18 @@ class Ops_Controller {
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
 
+        register_rest_route( 'aurora/v1', '/feed/integrations', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'feed_integrations_get' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/feed/integrations', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'feed_integrations_update' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
         register_rest_route( 'aurora/v1', '/repricer/run', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'repricer_run' ],
@@ -209,6 +222,18 @@ class Ops_Controller {
         register_rest_route( 'aurora/v1', '/repricer/rules/(?P<id>\\d+)/preview-scope', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'repricer_rules_preview_scope' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules/options', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'repricer_rules_options' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules/options', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_rules_options' ],
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
     }
@@ -821,14 +846,49 @@ class Ops_Controller {
 
     public function repricer_assignments_create( WP_REST_Request $request ) {
         $repo = new RepriceAssignmentRepository();
-        $scope = $request->get_param( 'scope' );
-        $rule  = $request->get_param( 'rule' );
+
+        $raw = $request->get_json_params();
+        if ( ! is_array( $raw ) || empty( $raw ) ) {
+            $raw = $request->get_params();
+        }
+        if ( ! is_array( $raw ) || empty( $raw ) ) {
+            return $this->repricer_assignments_list( $request );
+        }
+
+        $scope = is_array( $raw['scope'] ?? null ) ? $raw['scope'] : [];
+        $rule  = is_array( $raw['rule'] ?? null ) ? $raw['rule'] : [];
+        $name = sanitize_text_field( (string) ( $raw['name'] ?? '' ) );
+        if ( '' === $name ) {
+            return new WP_Error( 'aurora_repricer_assignment_bad_request', 'name is required', [ 'status' => 400 ] );
+        }
+
+        $scopeType = sanitize_text_field( (string) ( $raw['scope_type'] ?? ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) ) ) );
+        if ( '' === $scopeType ) {
+            return new WP_Error( 'aurora_repricer_assignment_bad_scope_type', 'scope_type is required', [ 'status' => 400 ] );
+        }
+
+        if ( ! isset( $scope['scope_type'] ) && ! isset( $scope['type'] ) ) {
+            $scope['scope_type'] = $scopeType;
+        }
+        $scopeProducts = array_values( array_filter( array_map( 'absint', (array) ( $scope['products'] ?? [] ) ) ) );
+        $scopeCategories = array_values( array_filter( array_map( 'absint', (array) ( $scope['categories'] ?? [] ) ) ) );
+        if ( empty( $scopeProducts ) && empty( $scopeCategories ) ) {
+            return new WP_Error( 'aurora_repricer_assignment_empty_scope', 'scope requires products or categories', [ 'status' => 400 ] );
+        }
+        if ( ! empty( $scopeProducts ) ) {
+            $scope['products'] = $scopeProducts;
+        }
+        if ( ! empty( $scopeCategories ) ) {
+            $scope['categories'] = $scopeCategories;
+        }
+
         $id = $repo->create( [
-            'name'       => sanitize_text_field( (string) $request->get_param( 'name' ) ),
-            'enabled'    => $this->int_param( $request, 'enabled', 1, 0, 1 ),
-            'scope_type' => sanitize_text_field( (string) $request->get_param( 'scope_type' ) ),
-            'scope_json' => is_array( $scope ) ? $scope : [],
-            'rule_json'  => is_array( $rule ) ? $rule : [],
+            'name'       => $name,
+            'enabled'    => isset( $raw['enabled'] ) ? max( 0, min( 1, (int) $raw['enabled'] ) ) : $this->int_param( $request, 'enabled', 1, 0, 1 ),
+            'priority'   => isset( $raw['priority'] ) ? max( 0, min( 1000000, (int) $raw['priority'] ) ) : 100,
+            'scope_type' => $scopeType,
+            'scope_json' => $scope,
+            'rule_json'  => $rule,
         ] );
         if ( $id <= 0 ) {
             return new WP_Error( 'aurora_repricer_assignment_create_failed', 'Unable to create assignment', [ 'status' => 500 ] );
@@ -933,6 +993,75 @@ class Ops_Controller {
                 'resolved_count'=> (int) ( $preview['resolved_count'] ?? 0 ),
                 'sample_ids'    => array_values( $preview['sample_ids'] ?? [] ),
                 'warnings'      => array_values( $preview['warnings'] ?? [] ),
+            ],
+            200
+        );
+    }
+
+    public function repricer_rules_options( WP_REST_Request $request ) {
+        $limit = $this->int_param( $request, 'limit', 200, 20, 500 );
+        $productsLimit = $this->int_param( $request, 'products_limit', 200, 20, 500 );
+
+        $productCategories = $this->taxonomy_term_options_by_id( 'product_cat', $limit );
+        $brandTaxonomy = $this->detect_brand_taxonomy();
+        $brands = null !== $brandTaxonomy ? $this->taxonomy_term_options_by_id( $brandTaxonomy, $limit ) : [];
+        $productTypeTerms = $this->taxonomy_term_options_by_slug( 'product_type', $limit );
+        $productTypeMeta = $this->meta_value_options( '_aurora_product_type', $limit );
+        $supplierIds = $this->meta_value_options( '_aurora_supplier_id', $limit );
+        $lines = $this->meta_value_options( '_aurora_line', $limit );
+
+        $productTypeMap = [];
+        foreach ( array_merge( $productTypeTerms, $productTypeMeta ) as $entry ) {
+            $value = sanitize_text_field( (string) ( $entry['value'] ?? '' ) );
+            if ( '' === $value ) {
+                continue;
+            }
+            $productTypeMap[ $value ] = [
+                'value' => $value,
+                'label' => sanitize_text_field( (string) ( $entry['label'] ?? $value ) ),
+            ];
+        }
+
+        $products = [];
+        $productQuery = new \WP_Query(
+            [
+                'post_type'           => 'product',
+                'post_status'         => 'publish',
+                'posts_per_page'      => $productsLimit,
+                'orderby'             => 'ID',
+                'order'               => 'DESC',
+                'fields'              => 'ids',
+                'no_found_rows'       => true,
+                'ignore_sticky_posts' => true,
+            ]
+        );
+        if ( ! empty( $productQuery->posts ) ) {
+            foreach ( $productQuery->posts as $productId ) {
+                $id = (int) $productId;
+                if ( $id <= 0 ) {
+                    continue;
+                }
+                $title = sanitize_text_field( (string) get_the_title( $id ) );
+                $products[] = [
+                    'id'    => $id,
+                    'label' => '#' . $id . ' ' . ( '' !== $title ? $title : 'Prodotto' ),
+                ];
+            }
+        }
+        wp_reset_postdata();
+
+        return new WP_REST_Response(
+            [
+                'ok' => true,
+                'options' => [
+                    'categories'     => $productCategories,
+                    'brands'         => $brands,
+                    'product_types'  => array_values( $productTypeMap ),
+                    'suppliers'      => $supplierIds,
+                    'lines'          => $lines,
+                    'products'       => $products,
+                    'brand_taxonomy' => $brandTaxonomy,
+                ],
             ],
             200
         );
@@ -1051,6 +1180,68 @@ class Ops_Controller {
             return $scheduled;
         }
         return [ 'ok' => true, 'run_id' => $run_id, 'scheduled' => true ];
+    }
+
+    public function feed_integrations_get( WP_REST_Request $request ) {
+        return new WP_REST_Response(
+            [
+                'ok'           => true,
+                'integrations' => $this->mask_feed_integrations( $this->load_feed_integrations() ),
+            ],
+            200
+        );
+    }
+
+    public function feed_integrations_update( WP_REST_Request $request ) {
+        $raw = $request->get_json_params();
+        if ( ! is_array( $raw ) ) {
+            $raw = [];
+        }
+        $incoming = is_array( $raw['integrations'] ?? null ) ? $raw['integrations'] : $raw;
+        if ( empty( $incoming ) ) {
+            $param = $request->get_param( 'integrations' );
+            if ( is_array( $param ) ) {
+                $incoming = $param;
+            }
+        }
+        if ( empty( $incoming ) ) {
+            $amazonParam = $request->get_param( 'amazon' );
+            $ebayParam = $request->get_param( 'ebay' );
+            if ( is_array( $amazonParam ) || is_array( $ebayParam ) ) {
+                $incoming = [
+                    'amazon' => is_array( $amazonParam ) ? $amazonParam : [],
+                    'ebay'   => is_array( $ebayParam ) ? $ebayParam : [],
+                ];
+            }
+        }
+        $current = $this->load_feed_integrations();
+        $next = $current;
+
+        $amazon = is_array( $incoming['amazon'] ?? null ) ? $incoming['amazon'] : [];
+        $next['amazon']['seller_id'] = sanitize_text_field( (string) ( $amazon['seller_id'] ?? $next['amazon']['seller_id'] ) );
+        $next['amazon']['marketplace_id'] = sanitize_text_field( (string) ( $amazon['marketplace_id'] ?? $next['amazon']['marketplace_id'] ) );
+        $next['amazon']['client_id'] = sanitize_text_field( (string) ( $amazon['client_id'] ?? $next['amazon']['client_id'] ) );
+        $next['amazon']['client_secret'] = $this->merge_secret_value( $next['amazon']['client_secret'], $amazon['client_secret'] ?? null );
+        $next['amazon']['refresh_token'] = $this->merge_secret_value( $next['amazon']['refresh_token'], $amazon['refresh_token'] ?? null );
+
+        $ebay = is_array( $incoming['ebay'] ?? null ) ? $incoming['ebay'] : [];
+        $next['ebay']['merchant_id'] = sanitize_text_field( (string) ( $ebay['merchant_id'] ?? $next['ebay']['merchant_id'] ) );
+        $next['ebay']['site_id'] = sanitize_text_field( (string) ( $ebay['site_id'] ?? $next['ebay']['site_id'] ) );
+        $next['ebay']['app_id'] = sanitize_text_field( (string) ( $ebay['app_id'] ?? $next['ebay']['app_id'] ) );
+        $next['ebay']['dev_id'] = sanitize_text_field( (string) ( $ebay['dev_id'] ?? $next['ebay']['dev_id'] ) );
+        $next['ebay']['cert_id'] = $this->merge_secret_value( $next['ebay']['cert_id'], $ebay['cert_id'] ?? null );
+        $next['ebay']['user_token'] = $this->merge_secret_value( $next['ebay']['user_token'], $ebay['user_token'] ?? null );
+
+        $next['updated_at'] = current_time( 'mysql', true );
+        update_option( self::FEED_INTEGRATIONS_OPTION, $next, false );
+
+        return new WP_REST_Response(
+            [
+                'ok'           => true,
+                'integrations' => $this->mask_feed_integrations( $next ),
+            ],
+            200
+        );
     }
 
     private function respond( $result ) {
@@ -1442,6 +1633,123 @@ class Ops_Controller {
     }
 
     /**
+     * @return array<int,array{value:string,label:string}>
+     */
+    private function taxonomy_term_options_by_slug( string $taxonomy, int $limit ) : array {
+        if ( ! taxonomy_exists( $taxonomy ) ) {
+            return [];
+        }
+        $terms = get_terms(
+            [
+                'taxonomy'   => $taxonomy,
+                'hide_empty' => false,
+                'number'     => $limit,
+                'orderby'    => 'name',
+                'order'      => 'ASC',
+                'fields'     => 'all',
+            ]
+        );
+        if ( ! is_array( $terms ) || is_wp_error( $terms ) ) {
+            return [];
+        }
+        $items = [];
+        foreach ( $terms as $term ) {
+            if ( ! $term instanceof \WP_Term ) {
+                continue;
+            }
+            $slug = sanitize_title( (string) $term->slug );
+            if ( '' === $slug ) {
+                continue;
+            }
+            $items[] = [
+                'value' => $slug,
+                'label' => sanitize_text_field( (string) $term->name ),
+            ];
+        }
+        return $items;
+    }
+
+    /**
+     * @return array<int,array{id:int,name:string}>
+     */
+    private function taxonomy_term_options_by_id( string $taxonomy, int $limit ) : array {
+        if ( ! taxonomy_exists( $taxonomy ) ) {
+            return [];
+        }
+        $terms = get_terms(
+            [
+                'taxonomy'   => $taxonomy,
+                'hide_empty' => false,
+                'number'     => $limit,
+                'orderby'    => 'name',
+                'order'      => 'ASC',
+                'fields'     => 'all',
+            ]
+        );
+        if ( ! is_array( $terms ) || is_wp_error( $terms ) ) {
+            return [];
+        }
+        $items = [];
+        foreach ( $terms as $term ) {
+            if ( ! $term instanceof \WP_Term ) {
+                continue;
+            }
+            $termId = (int) $term->term_id;
+            if ( $termId <= 0 ) {
+                continue;
+            }
+            $items[] = [
+                'id'   => $termId,
+                'name' => sanitize_text_field( (string) $term->name ),
+            ];
+        }
+        return $items;
+    }
+
+    /**
+     * @return array<int,array{value:string,label:string}>
+     */
+    private function meta_value_options( string $metaKey, int $limit ) : array {
+        global $wpdb;
+        $sql = $wpdb->prepare(
+            "SELECT DISTINCT pm.meta_value
+             FROM {$wpdb->postmeta} pm
+             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+             WHERE p.post_type = 'product'
+               AND p.post_status = 'publish'
+               AND pm.meta_key = %s
+               AND pm.meta_value <> ''
+             ORDER BY pm.meta_value ASC
+             LIMIT %d",
+            $metaKey,
+            $limit
+        );
+        $rows = $wpdb->get_col( $sql ) ?: [];
+        $items = [];
+        foreach ( $rows as $row ) {
+            $value = sanitize_text_field( (string) $row );
+            if ( '' === $value ) {
+                continue;
+            }
+            $items[] = [
+                'value' => $value,
+                'label' => $value,
+            ];
+        }
+        return $items;
+    }
+
+    private function detect_brand_taxonomy() : ?string {
+        if ( taxonomy_exists( 'product_brand' ) ) {
+            return 'product_brand';
+        }
+        if ( taxonomy_exists( 'pa_brand' ) ) {
+            return 'pa_brand';
+        }
+        return null;
+    }
+
+    /**
      * @param mixed $value
      */
     private function float_or_null( $value, float $min, float $max ) : ?float {
@@ -1513,6 +1821,129 @@ class Ops_Controller {
 
     private function int_param( WP_REST_Request $request, string $key, int $default, int $min, int $max ) : int {
         return $this->int_value( $request->get_param( $key ), $default, $min, $max );
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function default_feed_integrations() : array {
+        return [
+            'amazon' => [
+                'seller_id'      => '',
+                'marketplace_id' => '',
+                'client_id'      => '',
+                'client_secret'  => '',
+                'refresh_token'  => '',
+            ],
+            'ebay' => [
+                'merchant_id' => '',
+                'site_id'     => '',
+                'app_id'      => '',
+                'dev_id'      => '',
+                'cert_id'     => '',
+                'user_token'  => '',
+            ],
+            'updated_at' => null,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function load_feed_integrations() : array {
+        $defaults = $this->default_feed_integrations();
+        $stored = get_option( self::FEED_INTEGRATIONS_OPTION, [] );
+        if ( ! is_array( $stored ) ) {
+            return $defaults;
+        }
+        $amazon = is_array( $stored['amazon'] ?? null ) ? $stored['amazon'] : [];
+        $ebay = is_array( $stored['ebay'] ?? null ) ? $stored['ebay'] : [];
+        return [
+            'amazon' => [
+                'seller_id'      => sanitize_text_field( (string) ( $amazon['seller_id'] ?? '' ) ),
+                'marketplace_id' => sanitize_text_field( (string) ( $amazon['marketplace_id'] ?? '' ) ),
+                'client_id'      => sanitize_text_field( (string) ( $amazon['client_id'] ?? '' ) ),
+                'client_secret'  => $this->sanitize_secret_value( $amazon['client_secret'] ?? '' ),
+                'refresh_token'  => $this->sanitize_secret_value( $amazon['refresh_token'] ?? '' ),
+            ],
+            'ebay' => [
+                'merchant_id' => sanitize_text_field( (string) ( $ebay['merchant_id'] ?? '' ) ),
+                'site_id'     => sanitize_text_field( (string) ( $ebay['site_id'] ?? '' ) ),
+                'app_id'      => sanitize_text_field( (string) ( $ebay['app_id'] ?? '' ) ),
+                'dev_id'      => sanitize_text_field( (string) ( $ebay['dev_id'] ?? '' ) ),
+                'cert_id'     => $this->sanitize_secret_value( $ebay['cert_id'] ?? '' ),
+                'user_token'  => $this->sanitize_secret_value( $ebay['user_token'] ?? '' ),
+            ],
+            'updated_at' => sanitize_text_field( (string) ( $stored['updated_at'] ?? '' ) ),
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     * @return array<string,mixed>
+     */
+    private function mask_feed_integrations( array $data ) : array {
+        $amazon = is_array( $data['amazon'] ?? null ) ? $data['amazon'] : [];
+        $ebay = is_array( $data['ebay'] ?? null ) ? $data['ebay'] : [];
+        return [
+            'amazon' => [
+                'seller_id'         => sanitize_text_field( (string) ( $amazon['seller_id'] ?? '' ) ),
+                'marketplace_id'    => sanitize_text_field( (string) ( $amazon['marketplace_id'] ?? '' ) ),
+                'client_id'         => sanitize_text_field( (string) ( $amazon['client_id'] ?? '' ) ),
+                'has_client_secret' => '' !== (string) ( $amazon['client_secret'] ?? '' ),
+                'has_refresh_token' => '' !== (string) ( $amazon['refresh_token'] ?? '' ),
+                'client_secret'     => $this->mask_secret_value( (string) ( $amazon['client_secret'] ?? '' ) ),
+                'refresh_token'     => $this->mask_secret_value( (string) ( $amazon['refresh_token'] ?? '' ) ),
+            ],
+            'ebay' => [
+                'merchant_id'    => sanitize_text_field( (string) ( $ebay['merchant_id'] ?? '' ) ),
+                'site_id'        => sanitize_text_field( (string) ( $ebay['site_id'] ?? '' ) ),
+                'app_id'         => sanitize_text_field( (string) ( $ebay['app_id'] ?? '' ) ),
+                'dev_id'         => sanitize_text_field( (string) ( $ebay['dev_id'] ?? '' ) ),
+                'has_cert_id'    => '' !== (string) ( $ebay['cert_id'] ?? '' ),
+                'has_user_token' => '' !== (string) ( $ebay['user_token'] ?? '' ),
+                'cert_id'        => $this->mask_secret_value( (string) ( $ebay['cert_id'] ?? '' ) ),
+                'user_token'     => $this->mask_secret_value( (string) ( $ebay['user_token'] ?? '' ) ),
+            ],
+            'updated_at' => sanitize_text_field( (string) ( $data['updated_at'] ?? '' ) ),
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function sanitize_secret_value( $value ) : string {
+        $clean = trim( (string) $value );
+        $clean = preg_replace( '/[\r\n\t]+/', '', $clean ) ?? '';
+        if ( strlen( $clean ) > 4096 ) {
+            $clean = substr( $clean, 0, 4096 );
+        }
+        return $clean;
+    }
+
+    /**
+     * @param mixed $incoming
+     */
+    private function merge_secret_value( string $current, $incoming ) : string {
+        if ( null === $incoming ) {
+            return $current;
+        }
+        $clean = $this->sanitize_secret_value( $incoming );
+        if ( '' === $clean ) {
+            return $current;
+        }
+        return $clean;
+    }
+
+    private function mask_secret_value( string $secret ) : string {
+        $len = strlen( $secret );
+        if ( $len <= 0 ) {
+            return '';
+        }
+        if ( $len <= 4 ) {
+            return str_repeat( '*', $len );
+        }
+        return substr( $secret, 0, 2 ) . str_repeat( '*', max( 2, $len - 4 ) ) . substr( $secret, -2 );
     }
 
     private function int_value( $value, int $default, int $min, int $max ) : int {
