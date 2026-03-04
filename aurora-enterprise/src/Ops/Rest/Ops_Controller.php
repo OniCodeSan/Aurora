@@ -488,6 +488,7 @@ class Ops_Controller {
             'dry_run'            => $dryRun,
             'mode'               => $mode,
         ];
+        $payload = array_merge( $payload, $this->repricer_runtime_options( $request ) );
         if ( $assignment_id > 0 ) {
             $payload['assignment_id'] = $assignment_id;
         }
@@ -575,6 +576,7 @@ class Ops_Controller {
             'min_margin_percent' => $this->float_param( $request, 'min_margin_percent', 0.0, 0.0, 1000.0 ),
             'min_margin_abs'     => $this->float_param( $request, 'min_margin_abs', 0.0, 0.0, 1000000.0 ),
         ];
+        $payload = array_merge( $payload, $this->repricer_runtime_options( $request ) );
 
         error_log( sprintf( '[Aurora] repricer_apply request assignment_id=%d', $assignment_id ) );
 
@@ -653,6 +655,7 @@ class Ops_Controller {
                 'chunk_size'      => $chunk,
                 'max_products'    => $max,
             ];
+            $payload = array_merge( $payload, $this->repricer_runtime_options( $request ) );
             $inserted = $wpdb->insert(
                 $runsTable,
                 [
@@ -671,6 +674,7 @@ class Ops_Controller {
                 continue;
             }
             $runId = (int) $wpdb->insert_id;
+            $payload['run_id'] = $runId;
             $args = [
                 [
                     'run_id'  => $runId,
@@ -1098,6 +1102,57 @@ class Ops_Controller {
         $indexer = isset( $payload['indexer'] ) ? (string) $payload['indexer'] : null;
         $result  = $this->runs->enqueue( $opKey, $indexer, $payload );
         return $this->respond( $result );
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function repricer_runtime_options( WP_REST_Request $request ) : array {
+        $payload = [];
+        $strategyRaw = $request->get_param( 'strategy' );
+        if ( null !== $strategyRaw && '' !== $strategyRaw ) {
+            $strategy = sanitize_text_field( (string) $strategyRaw );
+            if ( in_array( $strategy, [ 'maintain_margin', 'match_competitor', 'beat_competitor' ], true ) ) {
+                $payload['strategy'] = $strategy;
+            }
+        }
+        $marginModeRaw = $request->get_param( 'margin_mode' );
+        if ( null !== $marginModeRaw && '' !== $marginModeRaw ) {
+            $marginMode = sanitize_text_field( (string) $marginModeRaw );
+            if ( in_array( $marginMode, [ 'clamp', 'block' ], true ) ) {
+                $payload['margin_mode'] = $marginMode;
+            }
+        }
+        $roundingModeRaw = $request->get_param( 'rounding_mode' );
+        if ( null !== $roundingModeRaw && '' !== $roundingModeRaw ) {
+            $roundingMode = sanitize_text_field( (string) $roundingModeRaw );
+            if ( in_array( $roundingMode, [ 'none', '.99', '99', '.49', '49', 'step' ], true ) ) {
+                $payload['rounding_mode'] = $roundingMode;
+            }
+        }
+
+        $floatKeys = [
+            'rounding_step' => [ 0.0, 1000000.0 ],
+            'max_raise_pct' => [ 0.0, 1000.0 ],
+            'max_drop_pct' => [ 0.0, 1000.0 ],
+            'beat_delta_abs' => [ 0.0, 1000000.0 ],
+            'beat_delta_pct' => [ 0.0, 1000.0 ],
+            'target_margin_percent' => [ 0.0, 1000.0 ],
+            'target_margin_abs' => [ 0.0, 1000000.0 ],
+            'competitor_price' => [ 0.0, 1000000.0 ],
+            'min_price' => [ 0.0, 1000000.0 ],
+            'max_price' => [ 0.0, 1000000.0 ],
+            'map_price' => [ 0.0, 1000000.0 ],
+        ];
+        foreach ( $floatKeys as $key => $range ) {
+            $raw = $request->get_param( $key );
+            if ( null === $raw || '' === $raw ) {
+                continue;
+            }
+            $payload[ $key ] = $this->float_param( $request, $key, 0.0, (float) $range[0], (float) $range[1] );
+        }
+
+        return $payload;
     }
 
     private function int_param( WP_REST_Request $request, string $key, int $default, int $min, int $max ) : int {

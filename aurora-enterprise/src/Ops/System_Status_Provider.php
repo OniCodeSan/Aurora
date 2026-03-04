@@ -217,17 +217,45 @@ class System_Status_Provider {
                 ARRAY_A
             ) ?: [];
 
-            $recent = $wpdb->get_results(
+            $recentRows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT product_id, variation_id, old_price, new_price, rule_applied, created_at
+                    "SELECT *
                      FROM {$tables['decisions']}
                      WHERE run_id = %d
                      ORDER BY id DESC
-                     LIMIT 5",
+                     LIMIT 20",
                     $runId
                 ),
                 ARRAY_A
             ) ?: [];
+            $recent = [];
+            foreach ( $recentRows as $row ) {
+                $recent[] = [
+                    'run_id'           => isset( $row['run_id'] ) ? (int) $row['run_id'] : $runId,
+                    'product_id'       => isset( $row['product_id'] ) ? (int) $row['product_id'] : null,
+                    'variation_id'     => isset( $row['variation_id'] ) ? (int) $row['variation_id'] : null,
+                    'old_price'        => isset( $row['old_price'] ) ? (float) $row['old_price'] : null,
+                    'candidate_price'  => isset( $row['candidate_price'] ) ? (float) $row['candidate_price'] : null,
+                    'clamped_price'    => isset( $row['clamped_price'] ) ? (float) $row['clamped_price'] : null,
+                    'rounded_price'    => isset( $row['rounded_price'] ) ? (float) $row['rounded_price'] : null,
+                    'new_price'        => isset( $row['new_price'] ) ? (float) $row['new_price'] : null,
+                    'delta_pct'        => isset( $row['delta_pct'] ) ? (float) $row['delta_pct'] : null,
+                    'cost'             => isset( $row['cost'] ) ? (float) $row['cost'] : null,
+                    'margin_before'    => isset( $row['margin_before'] ) ? (float) $row['margin_before'] : null,
+                    'margin_after'     => isset( $row['margin_after'] ) ? (float) $row['margin_after'] : null,
+                    'competitor_price' => isset( $row['competitor_price'] ) ? (float) $row['competitor_price'] : null,
+                    'min_price'        => isset( $row['min_price'] ) ? (float) $row['min_price'] : null,
+                    'max_price'        => isset( $row['max_price'] ) ? (float) $row['max_price'] : null,
+                    'map_price'        => isset( $row['map_price'] ) ? (float) $row['map_price'] : null,
+                    'rule_applied'     => $row['rule_applied'] ?? null,
+                    'strategy_key'     => $row['strategy_key'] ?? null,
+                    'strategy_rule_id' => $row['strategy_rule_id'] ?? null,
+                    'reason_code'      => $row['reason_code'] ?? null,
+                    'reason'           => $row['reason'] ?? null,
+                    'applied'          => isset( $row['applied'] ) ? (int) $row['applied'] : 0,
+                    'created_at'       => $row['created_at'] ?? null,
+                ];
+            }
 
             $appliedCountLastRun = (int) $wpdb->get_var(
                 $wpdb->prepare(

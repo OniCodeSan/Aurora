@@ -16,7 +16,10 @@ class RepriceRunManager {
     private RepriceLockManager $lock;
     private RepriceScopeResolver $resolver;
     private RepriceAssignmentRepository $assignments;
+    private RepricePriceEngine $priceEngine;
     private wpdb $db;
+    /** @var array<string,bool>|null */
+    private ?array $decisionColumns = null;
 
     public function __construct( ?RepriceChunkProcessor $chunks = null, ?RepriceLockManager $lock = null, ?RepriceScopeResolver $resolver = null, ?RepriceAssignmentRepository $assignments = null ) {
         $this->runs   = Ops_Run_Manager::instance();
@@ -25,6 +28,7 @@ class RepriceRunManager {
         $this->lock   = $lock ?? new RepriceLockManager();
         $this->resolver = $resolver ?? new RepriceScopeResolver();
         $this->assignments = $assignments ?? new RepriceAssignmentRepository();
+        $this->priceEngine = new RepricePriceEngine();
         global $wpdb;
         $this->db = $wpdb;
     }
@@ -65,6 +69,7 @@ class RepriceRunManager {
                 }
             }
             $assignmentRule    = is_array( $assignment['rule_json'] ?? null ) ? $assignment['rule_json'] : [];
+            $selectedRule      = $this->select_priority_rule( $assignmentRule );
             $assignmentFilters = is_array( $assignment['filters_json'] ?? null ) ? $assignment['filters_json'] : [];
             if ( empty( $assignmentFilters ) ) {
                 $rawFilters = $this->db->get_var( $this->db->prepare( "SELECT filters_json FROM {$this->db->prefix}aurora_reprice_assignments WHERE id=%d", $assignmentId ) );
@@ -76,7 +81,12 @@ class RepriceRunManager {
 
             $scope   = $assignmentScope;
             $filters = $assignmentFilters;
-            $config  = array_merge( $assignmentRule, $config );
+            $config  = array_merge( $config, $assignmentRule );
+            if ( is_array( $selectedRule ) ) {
+                $config = array_merge( $config, $selectedRule );
+                $config['strategy_rule_id'] = (string) ( $selectedRule['rule_id'] ?? '' );
+            }
+            $config = $this->apply_payload_overrides( $config, $payload );
             $config['assignment_id'] = $assignmentId;
             $scopeType = (string) ( $scope['scope_type'] ?? ( $scope['type'] ?? '' ) );
             if ( '' === trim( $scopeType ) ) {
@@ -231,7 +241,7 @@ class RepriceRunManager {
     /** @param array<string,mixed> $payload */
     private function config( array $payload ) : array {
         $optChunk = (int) get_option( 'aurora_reprice_chunk_size', 0 );
-        return [
+        $config = [
             'max_products'       => isset( $payload['max_products'] ) ? max( 1, (int) $payload['max_products'] ) : 10000,
             'chunk_size'         => isset( $payload['chunk_size'] ) ? max( 1, (int) $payload['chunk_size'] ) : ( $optChunk > 0 ? $optChunk : 500 ),
             'min_margin_percent' => isset( $payload['min_margin_percent'] ) ? (float) $payload['min_margin_percent'] : 10.0,
@@ -240,7 +250,92 @@ class RepriceRunManager {
             'memory_guard_ratio' => isset( $payload['memory_guard_ratio'] ) ? (float) $payload['memory_guard_ratio'] : 0.70,
             'mode'               => isset( $payload['mode'] ) ? (string) $payload['mode'] : ( ( isset( $payload['dry_run'] ) && false === (bool) $payload['dry_run'] ) ? 'apply' : 'dry_run' ),
             'assignment_id'      => isset( $payload['assignment_id'] ) ? (int) $payload['assignment_id'] : null,
+            'strategy'           => isset( $payload['strategy'] ) ? sanitize_text_field( (string) $payload['strategy'] ) : 'maintain_margin',
+            'margin_mode'        => isset( $payload['margin_mode'] ) ? sanitize_text_field( (string) $payload['margin_mode'] ) : 'clamp',
+            'rounding_mode'      => isset( $payload['rounding_mode'] ) ? sanitize_text_field( (string) $payload['rounding_mode'] ) : 'none',
+            'rounding_step'      => isset( $payload['rounding_step'] ) ? max( 0.0, (float) $payload['rounding_step'] ) : 0.0,
+            'max_raise_pct'      => isset( $payload['max_raise_pct'] ) ? max( 0.0, (float) $payload['max_raise_pct'] ) : 0.0,
+            'max_drop_pct'       => isset( $payload['max_drop_pct'] ) ? max( 0.0, (float) $payload['max_drop_pct'] ) : 0.0,
+            'beat_delta_abs'     => isset( $payload['beat_delta_abs'] ) ? max( 0.0, (float) $payload['beat_delta_abs'] ) : 0.0,
+            'beat_delta_pct'     => isset( $payload['beat_delta_pct'] ) ? max( 0.0, (float) $payload['beat_delta_pct'] ) : 0.0,
+            'target_margin_percent' => isset( $payload['target_margin_percent'] ) ? (float) $payload['target_margin_percent'] : null,
+            'target_margin_abs'     => isset( $payload['target_margin_abs'] ) ? (float) $payload['target_margin_abs'] : null,
+            'competitor_price'   => isset( $payload['competitor_price'] ) ? (float) $payload['competitor_price'] : null,
+            'min_price'          => isset( $payload['min_price'] ) ? (float) $payload['min_price'] : null,
+            'max_price'          => isset( $payload['max_price'] ) ? (float) $payload['max_price'] : null,
+            'map_price'          => isset( $payload['map_price'] ) ? (float) $payload['map_price'] : null,
         ];
+        return $this->apply_payload_overrides( $config, $payload );
+    }
+
+    /**
+     * @param array<string,mixed> $config
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function apply_payload_overrides( array $config, array $payload ) : array {
+        $numericKeys = [
+            'max_products', 'chunk_size', 'timebox_seconds', 'min_margin_percent', 'min_margin_abs',
+            'memory_guard_ratio', 'rounding_step', 'max_raise_pct', 'max_drop_pct', 'beat_delta_abs',
+            'beat_delta_pct', 'target_margin_percent', 'target_margin_abs', 'competitor_price',
+            'min_price', 'max_price', 'map_price',
+        ];
+        foreach ( $numericKeys as $key ) {
+            if ( array_key_exists( $key, $payload ) ) {
+                $config[ $key ] = $payload[ $key ];
+            }
+        }
+        $stringKeys = [ 'strategy', 'margin_mode', 'rounding_mode', 'mode', 'strategy_rule_id' ];
+        foreach ( $stringKeys as $key ) {
+            if ( array_key_exists( $key, $payload ) ) {
+                $config[ $key ] = sanitize_text_field( (string) $payload[ $key ] );
+            }
+        }
+        if ( array_key_exists( 'dry_run', $payload ) && ! array_key_exists( 'mode', $payload ) ) {
+            $config['mode'] = (bool) $payload['dry_run'] ? 'dry_run' : 'apply';
+        }
+        return $config;
+    }
+
+    /**
+     * @param array<string,mixed> $ruleJson
+     * @return array<string,mixed>|null
+     */
+    private function select_priority_rule( array $ruleJson ) : ?array {
+        $rules = $ruleJson['rules'] ?? null;
+        if ( ! is_array( $rules ) || empty( $rules ) ) {
+            return null;
+        }
+        $normalized = [];
+        foreach ( $rules as $index => $rule ) {
+            if ( ! is_array( $rule ) ) {
+                continue;
+            }
+            if ( isset( $rule['is_enabled'] ) && ! (bool) $rule['is_enabled'] ) {
+                continue;
+            }
+            if ( isset( $rule['enabled'] ) && ! (bool) $rule['enabled'] ) {
+                continue;
+            }
+            $entry = $rule;
+            $entry['priority'] = isset( $rule['priority'] ) ? (int) $rule['priority'] : 0;
+            $entry['rule_id'] = isset( $rule['rule_id'] ) ? (string) $rule['rule_id'] : ( isset( $rule['id'] ) ? (string) $rule['id'] : sprintf( 'rule_%04d', (int) $index ) );
+            $normalized[] = $entry;
+        }
+        if ( empty( $normalized ) ) {
+            return null;
+        }
+        usort(
+            $normalized,
+            static function ( array $a, array $b ) : int {
+                $priorityCmp = (int) ( $b['priority'] ?? 0 ) <=> (int) ( $a['priority'] ?? 0 );
+                if ( 0 !== $priorityCmp ) {
+                    return $priorityCmp;
+                }
+                return strcmp( (string) ( $a['rule_id'] ?? '' ), (string) ( $b['rule_id'] ?? '' ) );
+            }
+        );
+        return $normalized[0];
     }
 
     private function handle_lock_busy( int $runId, array $payload ) : void {
@@ -353,39 +448,38 @@ class RepriceRunManager {
             $costRaw = get_post_meta( $productId, '_cost', true );
         }
         $cost = '' === $costRaw ? null : (float) $costRaw;
+        $competitorRaw = get_post_meta( $productId, '_aurora_competitor_price', true );
+        $competitor = '' === $competitorRaw ? null : (float) $competitorRaw;
+        $minPriceRaw = get_post_meta( $productId, '_aurora_min_price', true );
+        $maxPriceRaw = get_post_meta( $productId, '_aurora_max_price', true );
+        $mapRaw      = get_post_meta( $productId, '_aurora_map_price', true );
+        if ( '' === $mapRaw ) {
+            $mapRaw = get_post_meta( $productId, '_map_price', true );
+        }
+        $minPrice = '' === $minPriceRaw ? null : (float) $minPriceRaw;
+        $maxPrice = '' === $maxPriceRaw ? null : (float) $maxPriceRaw;
+        $mapPrice = '' === $mapRaw ? null : (float) $mapRaw;
 
-        $rule         = 'no_change';
-        $reason       = null;
-        $new_price    = $price ?? 0.0;
-        $marginBefore = null;
-        $marginAfter  = null;
+        $engineResult = $this->priceEngine->evaluate(
+            [
+                'old_price'         => $price,
+                'cost'              => $cost,
+                'override'          => $override,
+                'competitor_price'  => $competitor,
+                'min_price'         => $minPrice,
+                'max_price'         => $maxPrice,
+                'map_price'         => $mapPrice,
+            ],
+            $config
+        );
 
-        if ( (string) $override === '1' ) {
-            $rule   = 'override';
-            $reason = 'override flag';
-        } elseif ( null === $cost || $cost <= 0 ) {
-            $rule   = 'missing_cost';
-            $reason = 'no cost';
-        } elseif ( null === $price || $price <= 0 ) {
-            $rule   = 'invalid';
-            $reason = 'price invalid';
-        } else {
-            $floorPercent = $cost * ( 1 + ( $config['min_margin_percent'] / 100 ) );
-            $floorAbs     = $cost + $config['min_margin_abs'];
-            $floor        = max( $floorPercent, $floorAbs );
-            if ( $price < $floor ) {
-                $new_price = $floor;
-                $rule      = 'floor_margin';
-                $reason    = 'below floor';
-            } else {
-                $new_price = $price;
-            }
-            if ( $price > 0 ) {
-                $marginBefore = ( $price - $cost ) / $price;
-            }
-            if ( $new_price > 0 ) {
-                $marginAfter = ( $new_price - $cost ) / $new_price;
-            }
+        $reasonCodes = $engineResult['reason_codes'] ?? [];
+        if ( ! is_array( $reasonCodes ) ) {
+            $reasonCodes = [];
+        }
+        $reasonText = implode( ',', array_values( array_filter( array_map( 'strval', $reasonCodes ) ) ) );
+        if ( '' === $reasonText ) {
+            $reasonText = (string) ( $engineResult['reason_code'] ?? '' );
         }
 
         return [
@@ -393,13 +487,26 @@ class RepriceRunManager {
             'variation_id'  => null,
             'sku'           => $sku ?: null,
             'currency'      => 'EUR',
-            'old_price'     => $price,
-            'new_price'     => $new_price,
-            'cost'          => $cost,
-            'margin_before' => $marginBefore,
-            'margin_after'  => $marginAfter,
-            'rule_applied'  => $rule,
-            'reason'        => $reason,
+            'old_price'     => $engineResult['old_price'],
+            'candidate_price'=> $engineResult['candidate_price'],
+            'clamped_price' => $engineResult['clamped_price'],
+            'rounded_price' => $engineResult['rounded_price'],
+            'new_price'     => $engineResult['new_price'],
+            'delta_pct'     => $engineResult['delta_pct'],
+            'cost'          => $engineResult['cost'],
+            'competitor_price' => $engineResult['competitor_price'],
+            'min_price'     => $engineResult['min_price'],
+            'max_price'     => $engineResult['max_price'],
+            'map_price'     => $engineResult['map_price'],
+            'margin_before' => $engineResult['margin_before'],
+            'margin_after'  => $engineResult['margin_after'],
+            'rule_applied'  => (string) ( $engineResult['rule_applied'] ?? 'no_change' ),
+            'strategy_key'  => (string) ( $engineResult['strategy_key'] ?? 'maintain_margin' ),
+            'strategy_rule_id' => isset( $engineResult['strategy_rule_id'] ) ? (string) $engineResult['strategy_rule_id'] : null,
+            'reason_code'   => (string) ( $engineResult['reason_code'] ?? 'no_change' ),
+            'reason_codes_json' => wp_json_encode( $reasonCodes ),
+            'reason'        => $reasonText,
+            'audit_json'    => $engineResult['audit_json'] ?? null,
             'applied'       => 0,
             'applied_at_utc'=> null,
             'old_price_applied_from' => null,
@@ -411,51 +518,85 @@ class RepriceRunManager {
 
     private function insert_decision( array $data ) : bool {
         $table = $this->db->prefix . 'aurora_reprice_decisions';
-        $inserted = $this->db->insert(
-            $table,
-            [
-                'run_id'        => $data['run_id'],
-                'product_id'    => $data['product_id'],
-                'variation_id'  => $data['variation_id'] ?? null,
-                'sku'           => $data['sku'],
-                'currency'      => $data['currency'],
-                'old_price'     => $data['old_price'],
-                'new_price'     => $data['new_price'],
-                'cost'          => $data['cost'],
-                'margin_before' => $data['margin_before'],
-                'margin_after'  => $data['margin_after'],
-                'rule_applied'  => $data['rule_applied'],
-                'reason'        => $data['reason'],
-                'applied'       => $data['applied'],
-                'applied_at_utc'=> $data['applied_at_utc'],
-                'old_price_applied_from' => $data['old_price_applied_from'],
-                'new_price_applied_to'   => $data['new_price_applied_to'],
-                'rollback_status'        => $data['rollback_status'],
-                'rolled_back_at_utc'     => $data['rolled_back_at_utc'],
-                'created_at'    => $data['created_at'],
-            ],
-            [
-                '%d',
-                '%d',
-                '%d',
-                '%s',
-                '%s',
-                '%f',
-                '%f',
-                '%f',
-                '%f',
-                '%f',
-                '%s',
-                '%s',
-                '%d',
-                '%s',
-                '%f',
-                '%f',
-                '%s',
-                '%s',
-                '%s',
-            ]
-        );
+        $row = [
+            'run_id'        => $data['run_id'],
+            'product_id'    => $data['product_id'],
+            'variation_id'  => $data['variation_id'] ?? null,
+            'sku'           => $data['sku'],
+            'currency'      => $data['currency'],
+            'old_price'     => $data['old_price'],
+            'candidate_price' => $data['candidate_price'] ?? null,
+            'clamped_price' => $data['clamped_price'] ?? null,
+            'rounded_price' => $data['rounded_price'] ?? null,
+            'new_price'     => $data['new_price'],
+            'delta_pct'     => $data['delta_pct'] ?? null,
+            'cost'          => $data['cost'],
+            'competitor_price' => $data['competitor_price'] ?? null,
+            'min_price'     => $data['min_price'] ?? null,
+            'max_price'     => $data['max_price'] ?? null,
+            'map_price'     => $data['map_price'] ?? null,
+            'margin_before' => $data['margin_before'],
+            'margin_after'  => $data['margin_after'],
+            'rule_applied'  => $data['rule_applied'],
+            'strategy_key'  => $data['strategy_key'] ?? null,
+            'strategy_rule_id' => $data['strategy_rule_id'] ?? null,
+            'reason_code'   => $data['reason_code'] ?? null,
+            'reason_codes_json' => $data['reason_codes_json'] ?? null,
+            'reason'        => $data['reason'],
+            'audit_json'    => $data['audit_json'] ?? null,
+            'applied'       => $data['applied'],
+            'applied_at_utc'=> $data['applied_at_utc'],
+            'old_price_applied_from' => $data['old_price_applied_from'],
+            'new_price_applied_to'   => $data['new_price_applied_to'],
+            'rollback_status'        => $data['rollback_status'],
+            'rolled_back_at_utc'     => $data['rolled_back_at_utc'],
+            'created_at'    => $data['created_at'],
+        ];
+        $formatsMap = [
+            'run_id' => '%d',
+            'product_id' => '%d',
+            'variation_id' => '%d',
+            'sku' => '%s',
+            'currency' => '%s',
+            'old_price' => '%f',
+            'candidate_price' => '%f',
+            'clamped_price' => '%f',
+            'rounded_price' => '%f',
+            'new_price' => '%f',
+            'delta_pct' => '%f',
+            'cost' => '%f',
+            'competitor_price' => '%f',
+            'min_price' => '%f',
+            'max_price' => '%f',
+            'map_price' => '%f',
+            'margin_before' => '%f',
+            'margin_after' => '%f',
+            'rule_applied' => '%s',
+            'strategy_key' => '%s',
+            'strategy_rule_id' => '%s',
+            'reason_code' => '%s',
+            'reason_codes_json' => '%s',
+            'reason' => '%s',
+            'audit_json' => '%s',
+            'applied' => '%d',
+            'applied_at_utc' => '%s',
+            'old_price_applied_from' => '%f',
+            'new_price_applied_to' => '%f',
+            'rollback_status' => '%s',
+            'rolled_back_at_utc' => '%s',
+            'created_at' => '%s',
+        ];
+        $columns = $this->decision_columns();
+        $filteredRow = [];
+        $formats = [];
+        foreach ( $row as $column => $value ) {
+            if ( empty( $columns[ $column ] ) ) {
+                continue;
+            }
+            $filteredRow[ $column ] = $value;
+            $formats[] = $formatsMap[ $column ] ?? '%s';
+        }
+        $inserted = $this->db->insert( $table, $filteredRow, $formats );
         return false !== $inserted;
     }
 
@@ -466,8 +607,9 @@ class RepriceRunManager {
      */
     private function maybe_apply( int $productId, array $decision, array $config ) : array {
         $mode = (string) ( $config['mode'] ?? 'dry_run' );
+        $blockedReason = (string) ( $decision['reason_code'] ?? '' );
         $shouldApply = 'apply' === $mode
-            && in_array( $decision['rule_applied'], [ 'floor_margin' ], true )
+            && ! in_array( $blockedReason, [ 'override_flag', 'missing_cost', 'invalid_price', 'floor_margin_block' ], true )
             && $decision['new_price'] !== null
             && $decision['old_price'] !== null
             && (float) $decision['new_price'] !== (float) $decision['old_price'];
@@ -491,6 +633,26 @@ class RepriceRunManager {
         $decision['new_price_applied_to']   = $new;
 
         return [ 'decision' => $decision, 'error' => null ];
+    }
+
+    /**
+     * @return array<string,bool>
+     */
+    private function decision_columns() : array {
+        if ( is_array( $this->decisionColumns ) ) {
+            return $this->decisionColumns;
+        }
+        $table = $this->db->prefix . 'aurora_reprice_decisions';
+        $rows = $this->db->get_results( "SHOW COLUMNS FROM {$table}", ARRAY_A );
+        $columns = [];
+        foreach ( $rows ?: [] as $row ) {
+            $name = isset( $row['Field'] ) ? (string) $row['Field'] : '';
+            if ( '' !== $name ) {
+                $columns[ $name ] = true;
+            }
+        }
+        $this->decisionColumns = $columns;
+        return $columns;
     }
 
     private function memory_guard_triggered( float $ratio ) : bool {
