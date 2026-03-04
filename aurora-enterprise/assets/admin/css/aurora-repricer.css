@@ -255,6 +255,14 @@
   text-align: right;
 }
 
+.aurora-repricer-table {
+  font-size: 11px;
+}
+
+.aurora-repricer-section {
+  overflow-x: auto;
+}
+
 .aurora-repricer-danger {
   border-color: #d63638;
   background: #fff5f5;

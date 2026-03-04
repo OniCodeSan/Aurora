@@ -494,18 +494,24 @@
 
   const collectDecisionRows = (repricer) => {
     const runId = Number(repricer.last_run?.id || 0);
-    const mode = String(repricer.last_run?.mode || "dry_run");
     const rows = Array.isArray(repricer.recent_decisions) ? repricer.recent_decisions : [];
     return rows.map((row) => {
-      const appliedGuess = mode === "apply" && String(row.old_price ?? "") !== String(row.new_price ?? "") ? "si" : "no";
       return {
-        run_id: runId,
+        run_id: Number(row.run_id || runId),
         product_id: row.product_id,
         old_price: row.old_price,
+        candidate_price: row.candidate_price,
+        clamped_price: row.clamped_price,
+        rounded_price: row.rounded_price,
         new_price: row.new_price,
+        delta_pct: row.delta_pct,
+        margin_before: row.margin_before,
+        margin_after: row.margin_after,
         rule_applied: row.rule_applied || "",
+        strategy_key: row.strategy_key || "",
+        reason_code: row.reason_code || "",
         created_at: row.created_at || "",
-        applied: appliedGuess,
+        applied: Number(row.applied || 0) === 1 ? "si" : "no",
       };
     });
   };
@@ -526,8 +532,15 @@
       return `<tr>
         <td><a href="${productUrl}">#${esc(row.product_id)}</a></td>
         <td class="num">${esc(row.old_price ?? "-")}</td>
+        <td class="num">${esc(row.candidate_price ?? "-")}</td>
+        <td class="num">${esc(row.clamped_price ?? "-")}</td>
+        <td class="num">${esc(row.rounded_price ?? "-")}</td>
         <td class="num">${esc(row.new_price ?? "-")}</td>
+        <td class="num">${esc(row.delta_pct ?? "-")}</td>
+        <td class="num">${esc(row.margin_before ?? "-")}</td>
+        <td class="num">${esc(row.margin_after ?? "-")}</td>
         <td>${esc(row.rule_applied || "-")}</td>
+        <td>${esc(row.reason_code || "-")}</td>
         <td>${esc(row.created_at || "-")}</td>
         <td>${row.applied === "si" ? "Sì" : "No"}</td>
       </tr>`;
@@ -543,8 +556,8 @@
           <div class="aurora-repricer-field"><label for="filter-applied">Applicato</label><select id="filter-applied"><option value="all" ${state.filters.applied === "all" ? "selected" : ""}>Tutti</option><option value="si" ${state.filters.applied === "si" ? "selected" : ""}>Sì</option><option value="no" ${state.filters.applied === "no" ? "selected" : ""}>No</option></select></div>
         </div>
         <table class="widefat striped aurora-repricer-table">
-          <thead><tr><th>Prodotto</th><th class="num">Old</th><th class="num">New</th><th>Regola</th><th>Creato</th><th>Applicato</th></tr></thead>
-          <tbody>${tableRows || '<tr><td colspan="6" class="aurora-repricer-empty">Nessuna decisione trovata con i filtri correnti.</td></tr>'}</tbody>
+          <thead><tr><th>Prodotto</th><th class="num">Old</th><th class="num">Candidate</th><th class="num">Clamped</th><th class="num">Rounded</th><th class="num">New</th><th class="num">Delta %</th><th class="num">Margin B</th><th class="num">Margin A</th><th>Regola</th><th>Reason</th><th>Creato</th><th>Applicato</th></tr></thead>
+          <tbody>${tableRows || '<tr><td colspan="13" class="aurora-repricer-empty">Nessuna decisione trovata con i filtri correnti.</td></tr>'}</tbody>
         </table>
       </section>
     `;
