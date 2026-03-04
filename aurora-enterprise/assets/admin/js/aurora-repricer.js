@@ -60,6 +60,59 @@
   const routes = cfg.routes || {};
   const basePollMs = Number(cfg.pollMs || 5000);
   const maxPollMs = Number(cfg.maxPollMs || 15000);
+  const defaultRuleDraft = () => ({
+    rule_meta: { name: "", priority: 100, enabled: true, exclusive: false },
+    scope: {
+      product_ids: [],
+      brand_ids: [],
+      brand_terms: [],
+      category_ids: [],
+      supplier_ids: [],
+      product_type: [],
+      line: [],
+      erp_stock_condition: "any",
+      urgent_only: false,
+    },
+    conditions: {
+      cost_min: null,
+      cost_max: null,
+      competitor_position_min: null,
+      competitor_position_max: null,
+      min_reviews: null,
+      rotation_index: null,
+      sold_last_30_days: null,
+      top_search_only: false,
+    },
+    pricing_strategy: {
+      type: "manual",
+      markup_percent: null,
+      markup_abs: null,
+      margin_target_percent: null,
+      manual_mode: "keep",
+      manual_price: null,
+      competitor_mode: "match",
+      competitor_delta: null,
+    },
+    guardrails: {
+      min_price: null,
+      max_price: null,
+      min_margin_percent: null,
+      min_margin_abs: null,
+      max_raise_percent: null,
+      max_drop_percent: null,
+      rounding: "none",
+      step_value: null,
+      margin_mode: "clamp",
+    },
+    inventory_rules: {
+      max_qty_per_order: null,
+      apply_if_stock_gt: null,
+    },
+    validity: {
+      start_at: null,
+      end_at: null,
+    },
+  });
 
   const state = {
     data: null,
@@ -95,12 +148,20 @@
       rollbackDanger: false,
     },
     interactionUntil: 0,
+    rules: {
+      items: [],
+      selectedId: 0,
+      draft: defaultRuleDraft(),
+      preview: null,
+      loaded: false,
+    },
   };
 
   const esc = (value) =>
     String(value ?? "").replace(/[&<>\"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]));
 
   const route = (key) => String(routes[key] || "").replace(/^\/+/, "");
+  const routeWithId = (key, id) => route(key).replace("%id%", encodeURIComponent(String(id || 0)));
 
   const showNotice = (type, message) => {
     if (!noticesRoot) return;
@@ -290,10 +351,10 @@
     }, 1000);
   };
 
-  const runAction = async (button, path, body, onSuccess) => {
+  const runAction = async (button, path, body, onSuccess, method) => {
     try {
       setLoading(button, true);
-      const result = await apiFetch(path, "POST", body, { lockOnAuth: false });
+      const result = await apiFetch(path, method || "POST", body, { lockOnAuth: false });
       if (onSuccess) {
         onSuccess(result);
       }
@@ -382,6 +443,7 @@
     const selected = assignments.find((a) => Number(a.id) === Number(state.selectedAssignmentId)) || null;
     const preview = state.previews[String(state.selectedAssignmentId)] || null;
     const previewZero = preview && Number(preview.selected_count || 0) === 0;
+    const rulePreviewZero = state.rules.preview && Number(state.rules.preview.resolved_count || 0) === 0;
 
     const run = repricer.last_run || null;
     const progress = repricer.progress || null;
@@ -410,6 +472,7 @@
             ${selected ? `<p class="aurora-repricer-help">Scope type: <strong>${esc(selected.scope_type || "-")}</strong></p>` : ""}
             ${preview ? `<p class="aurora-repricer-help">Resolved: <strong>${esc(preview.selected_count || 0)}</strong> | Product IDs: ${esc((preview.product_ids || []).join(", ") || "-")}</p>` : '<p class="aurora-repricer-empty">Nessuna preview eseguita.</p>'}
             ${previewZero ? '<div class="notice notice-warning inline"><p>Nessun prodotto eleggibile: run disabilitato.</p></div>' : ""}
+            ${rulePreviewZero ? '<div class="notice notice-warning inline"><p>Preview scope regola = 0: run disabilitato finché non correggi la regola.</p></div>' : ""}
           </div>
         </div>
 
@@ -435,7 +498,7 @@
         <div class="aurora-repricer-step">
           <h3>Step 3 - Azione</h3>
           <div class="aurora-repricer-actions">
-            <button type="button" class="button button-primary" id="aurora-run-repricer" ${previewZero ? "disabled" : ""}>Run Repricer ${state.form.mode === "apply" ? "(apply)" : "(dry-run)"}</button>
+            <button type="button" class="button button-primary" id="aurora-run-repricer" ${previewZero || rulePreviewZero ? "disabled" : ""}>Run Repricer ${state.form.mode === "apply" ? "(apply)" : "(dry-run)"}</button>
           </div>
           <div class="aurora-repricer-card" style="margin-top:12px;">
             <h3>Stato run</h3>
@@ -659,6 +722,326 @@
     `;
   };
 
+  const csvToIntArray = (value) =>
+    String(value || "")
+      .split(",")
+      .map((item) => Number(item.trim()))
+      .filter((num) => Number.isFinite(num) && num > 0)
+      .map((num) => Math.trunc(num));
+
+  const csvToTextArray = (value) =>
+    String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+
+  const datetimeInputValue = (value) => {
+    if (!value) return "";
+    const text = String(value).replace(" ", "T");
+    return text.length >= 16 ? text.slice(0, 16) : text;
+  };
+
+  const datetimeApiValue = (value) => {
+    const clean = String(value || "").trim();
+    if (!clean) return null;
+    return clean.replace("T", " ");
+  };
+
+  const getRuleField = (path) => {
+    if (!path) return undefined;
+    return path.split(".").reduce((acc, key) => (acc && acc[key] !== undefined ? acc[key] : undefined), state.rules.draft);
+  };
+
+  const setRuleField = (path, value) => {
+    if (!path) return;
+    const segments = path.split(".");
+    let cursor = state.rules.draft;
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      const key = segments[i];
+      if (!cursor[key] || typeof cursor[key] !== "object") {
+        cursor[key] = {};
+      }
+      cursor = cursor[key];
+    }
+    cursor[segments[segments.length - 1]] = value;
+  };
+
+  const normalizeRuleFromApi = (row) => {
+    const json = row && row.rule_json && typeof row.rule_json === "object" ? row.rule_json : null;
+    if (!json) return defaultRuleDraft();
+    const merged = defaultRuleDraft();
+    const merge = (target, source) => {
+      Object.keys(source || {}).forEach((key) => {
+        if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key]) && target[key] && typeof target[key] === "object") {
+          merge(target[key], source[key]);
+        } else {
+          target[key] = source[key];
+        }
+      });
+    };
+    merge(merged, json);
+    return merged;
+  };
+
+  const buildRuleEditorSection = () => {
+    const rules = Array.isArray(state.rules.items) ? state.rules.items : [];
+    const draft = state.rules.draft || defaultRuleDraft();
+    const selectedId = Number(state.rules.selectedId || 0);
+    const preview = state.rules.preview;
+    const previewText =
+      preview && typeof preview === "object"
+        ? `Resolved: ${preview.resolved_count || 0} | Sample IDs: ${(preview.sample_ids || []).join(", ") || "-"}`
+        : "Nessuna preview scope.";
+
+    const num = (path) => {
+      const value = getRuleField(path);
+      return value === null || value === undefined ? "" : String(value);
+    };
+
+    return `
+      <section class="aurora-repricer-section" id="aurora-rule-editor">
+        <h2>Rule editor</h2>
+        <p class="aurora-repricer-help">Gestione regole prezzo deterministiche: scope, condizioni, strategia e guardrail.</p>
+        <div class="aurora-repricer-grid-2">
+          <div class="aurora-repricer-field">
+            <label for="aurora-rule-select">Regola salvata</label>
+            <select id="aurora-rule-select">
+              <option value="0">Nuova regola</option>
+              ${rules
+                .map(
+                  (rule) =>
+                    `<option value="${esc(rule.id)}" ${Number(rule.id) === selectedId ? "selected" : ""}>#${esc(rule.id)} ${esc(
+                      rule.name || "(senza nome)"
+                    )}</option>`
+                )
+                .join("")}
+            </select>
+          </div>
+          <div class="aurora-repricer-actions">
+            <button type="button" class="button" id="aurora-rule-new">Nuova</button>
+            <button type="button" class="button button-primary" id="aurora-rule-save">Salva regola</button>
+            <button type="button" class="button" id="aurora-rule-preview" ${selectedId > 0 ? "" : "disabled"}>Preview scope</button>
+          </div>
+        </div>
+
+        <h3>Meta</h3>
+        <div class="aurora-repricer-grid">
+          <div class="aurora-repricer-field"><label>Nome</label><input type="text" data-rule-field="rule_meta.name" value="${esc(
+            getRuleField("rule_meta.name") || ""
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Priority</label><input type="number" min="0" max="1000000" data-rule-field="rule_meta.priority" data-rule-type="int" value="${esc(
+            num("rule_meta.priority")
+          )}"></div>
+          <div class="aurora-repricer-field"><label><input type="checkbox" data-rule-field="rule_meta.enabled" data-rule-type="bool" ${
+            getRuleField("rule_meta.enabled") ? "checked" : ""
+          }> Enabled</label></div>
+          <div class="aurora-repricer-field"><label><input type="checkbox" data-rule-field="rule_meta.exclusive" data-rule-type="bool" ${
+            getRuleField("rule_meta.exclusive") ? "checked" : ""
+          }> Escludi altre regole</label></div>
+        </div>
+
+        <h3>Scope</h3>
+        <div class="aurora-repricer-grid">
+          <div class="aurora-repricer-field"><label>Product IDs (csv)</label><input type="text" data-rule-field="scope.product_ids" data-rule-type="csv-int" value="${esc(
+            (getRuleField("scope.product_ids") || []).join(",")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Category IDs (csv)</label><input type="text" data-rule-field="scope.category_ids" data-rule-type="csv-int" value="${esc(
+            (getRuleField("scope.category_ids") || []).join(",")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Brand terms (csv)</label><input type="text" data-rule-field="scope.brand_terms" data-rule-type="csv-text" value="${esc(
+            (getRuleField("scope.brand_terms") || []).join(",")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Supplier IDs (csv)</label><input type="text" data-rule-field="scope.supplier_ids" data-rule-type="csv-text" value="${esc(
+            (getRuleField("scope.supplier_ids") || []).join(",")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Product type (csv)</label><input type="text" data-rule-field="scope.product_type" data-rule-type="csv-text" value="${esc(
+            (getRuleField("scope.product_type") || []).join(",")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Line (csv)</label><input type="text" data-rule-field="scope.line" data-rule-type="csv-text" value="${esc(
+            (getRuleField("scope.line") || []).join(",")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>ERP stock</label><select data-rule-field="scope.erp_stock_condition"><option value="any" ${
+            getRuleField("scope.erp_stock_condition") === "any" ? "selected" : ""
+          }>any</option><option value="eq_0" ${
+      getRuleField("scope.erp_stock_condition") === "eq_0" ? "selected" : ""
+    }>eq_0</option><option value="gt_0" ${
+      getRuleField("scope.erp_stock_condition") === "gt_0" ? "selected" : ""
+    }>gt_0</option></select></div>
+          <div class="aurora-repricer-field"><label><input type="checkbox" data-rule-field="scope.urgent_only" data-rule-type="bool" ${
+            getRuleField("scope.urgent_only") ? "checked" : ""
+          }> Urgent only</label></div>
+        </div>
+
+        <h3>Conditions</h3>
+        <div class="aurora-repricer-grid">
+          <div class="aurora-repricer-field"><label>Cost min</label><input type="number" step="0.01" data-rule-field="conditions.cost_min" data-rule-type="float-null" value="${esc(
+            num("conditions.cost_min")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Cost max</label><input type="number" step="0.01" data-rule-field="conditions.cost_max" data-rule-type="float-null" value="${esc(
+            num("conditions.cost_max")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Competitor pos min</label><input type="number" data-rule-field="conditions.competitor_position_min" data-rule-type="int-null" value="${esc(
+            num("conditions.competitor_position_min")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Competitor pos max</label><input type="number" data-rule-field="conditions.competitor_position_max" data-rule-type="int-null" value="${esc(
+            num("conditions.competitor_position_max")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Min reviews</label><input type="number" data-rule-field="conditions.min_reviews" data-rule-type="int-null" value="${esc(
+            num("conditions.min_reviews")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Rotation op</label><select data-rule-field="conditions.rotation_index.operator"><option value="">-</option><option value=">" ${
+            getRuleField("conditions.rotation_index.operator") === ">" ? "selected" : ""
+          }>&gt;</option><option value=">=" ${
+      getRuleField("conditions.rotation_index.operator") === ">=" ? "selected" : ""
+    }>&gt;=</option><option value="<" ${
+      getRuleField("conditions.rotation_index.operator") === "<" ? "selected" : ""
+    }>&lt;</option><option value="<=" ${
+      getRuleField("conditions.rotation_index.operator") === "<=" ? "selected" : ""
+    }>&lt;=</option><option value="=" ${
+      getRuleField("conditions.rotation_index.operator") === "=" ? "selected" : ""
+    }>=</option><option value="!=" ${
+      getRuleField("conditions.rotation_index.operator") === "!=" ? "selected" : ""
+    }>!=</option></select></div>
+          <div class="aurora-repricer-field"><label>Rotation value</label><input type="number" step="0.01" data-rule-field="conditions.rotation_index.value" data-rule-type="float-null" value="${esc(
+            num("conditions.rotation_index.value")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Sold 30d op</label><select data-rule-field="conditions.sold_last_30_days.operator"><option value="">-</option><option value=">" ${
+            getRuleField("conditions.sold_last_30_days.operator") === ">" ? "selected" : ""
+          }>&gt;</option><option value=">=" ${
+      getRuleField("conditions.sold_last_30_days.operator") === ">=" ? "selected" : ""
+    }>&gt;=</option><option value="<" ${
+      getRuleField("conditions.sold_last_30_days.operator") === "<" ? "selected" : ""
+    }>&lt;</option><option value="<=" ${
+      getRuleField("conditions.sold_last_30_days.operator") === "<=" ? "selected" : ""
+    }>&lt;=</option><option value="=" ${
+      getRuleField("conditions.sold_last_30_days.operator") === "=" ? "selected" : ""
+    }>=</option><option value="!=" ${
+      getRuleField("conditions.sold_last_30_days.operator") === "!=" ? "selected" : ""
+    }>!=</option></select></div>
+          <div class="aurora-repricer-field"><label>Sold 30d value</label><input type="number" step="0.01" data-rule-field="conditions.sold_last_30_days.value" data-rule-type="float-null" value="${esc(
+            num("conditions.sold_last_30_days.value")
+          )}"></div>
+          <div class="aurora-repricer-field"><label><input type="checkbox" data-rule-field="conditions.top_search_only" data-rule-type="bool" ${
+            getRuleField("conditions.top_search_only") ? "checked" : ""
+          }> Top search only</label></div>
+        </div>
+
+        <h3>Pricing strategy</h3>
+        <div class="aurora-repricer-grid">
+          <div class="aurora-repricer-field"><label>Type</label><select data-rule-field="pricing_strategy.type"><option value="markup" ${
+            getRuleField("pricing_strategy.type") === "markup" ? "selected" : ""
+          }>markup</option><option value="margin" ${
+      getRuleField("pricing_strategy.type") === "margin" ? "selected" : ""
+    }>margin</option><option value="manual" ${
+      getRuleField("pricing_strategy.type") === "manual" ? "selected" : ""
+    }>manual</option><option value="competitor" ${
+      getRuleField("pricing_strategy.type") === "competitor" ? "selected" : ""
+    }>competitor</option></select></div>
+          <div class="aurora-repricer-field"><label>Markup %</label><input type="number" step="0.01" data-rule-field="pricing_strategy.markup_percent" data-rule-type="float-null" value="${esc(
+            num("pricing_strategy.markup_percent")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Markup abs</label><input type="number" step="0.01" data-rule-field="pricing_strategy.markup_abs" data-rule-type="float-null" value="${esc(
+            num("pricing_strategy.markup_abs")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Target margin %</label><input type="number" step="0.01" data-rule-field="pricing_strategy.margin_target_percent" data-rule-type="float-null" value="${esc(
+            num("pricing_strategy.margin_target_percent")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Manual mode</label><select data-rule-field="pricing_strategy.manual_mode"><option value="keep" ${
+            getRuleField("pricing_strategy.manual_mode") === "keep" ? "selected" : ""
+          }>keep</option><option value="override" ${
+      getRuleField("pricing_strategy.manual_mode") === "override" ? "selected" : ""
+    }>override</option></select></div>
+          <div class="aurora-repricer-field"><label>Manual price</label><input type="number" step="0.01" data-rule-field="pricing_strategy.manual_price" data-rule-type="float-null" value="${esc(
+            num("pricing_strategy.manual_price")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Competitor mode</label><select data-rule-field="pricing_strategy.competitor_mode"><option value="match" ${
+            getRuleField("pricing_strategy.competitor_mode") === "match" ? "selected" : ""
+          }>match</option><option value="beat" ${
+      getRuleField("pricing_strategy.competitor_mode") === "beat" ? "selected" : ""
+    }>beat</option></select></div>
+          <div class="aurora-repricer-field"><label>Competitor delta</label><input type="number" step="0.01" data-rule-field="pricing_strategy.competitor_delta" data-rule-type="float-null" value="${esc(
+            num("pricing_strategy.competitor_delta")
+          )}"></div>
+        </div>
+
+        <h3>Guardrails</h3>
+        <div class="aurora-repricer-grid">
+          <div class="aurora-repricer-field"><label>Min price</label><input type="number" step="0.01" data-rule-field="guardrails.min_price" data-rule-type="float-null" value="${esc(
+            num("guardrails.min_price")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Max price</label><input type="number" step="0.01" data-rule-field="guardrails.max_price" data-rule-type="float-null" value="${esc(
+            num("guardrails.max_price")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Min margin %</label><input type="number" step="0.01" data-rule-field="guardrails.min_margin_percent" data-rule-type="float-null" value="${esc(
+            num("guardrails.min_margin_percent")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Min margin abs</label><input type="number" step="0.01" data-rule-field="guardrails.min_margin_abs" data-rule-type="float-null" value="${esc(
+            num("guardrails.min_margin_abs")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Max raise %</label><input type="number" step="0.01" data-rule-field="guardrails.max_raise_percent" data-rule-type="float-null" value="${esc(
+            num("guardrails.max_raise_percent")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Max drop %</label><input type="number" step="0.01" data-rule-field="guardrails.max_drop_percent" data-rule-type="float-null" value="${esc(
+            num("guardrails.max_drop_percent")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Rounding</label><select data-rule-field="guardrails.rounding"><option value="none" ${
+            getRuleField("guardrails.rounding") === "none" ? "selected" : ""
+          }>none</option><option value="x.99" ${
+      getRuleField("guardrails.rounding") === "x.99" ? "selected" : ""
+    }>x.99</option><option value="x.49" ${
+      getRuleField("guardrails.rounding") === "x.49" ? "selected" : ""
+    }>x.49</option><option value="step" ${
+      getRuleField("guardrails.rounding") === "step" ? "selected" : ""
+    }>step</option></select></div>
+          <div class="aurora-repricer-field"><label>Step value</label><input type="number" step="0.01" data-rule-field="guardrails.step_value" data-rule-type="float-null" value="${esc(
+            num("guardrails.step_value")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Margin mode</label><select data-rule-field="guardrails.margin_mode"><option value="clamp" ${
+            getRuleField("guardrails.margin_mode") === "clamp" ? "selected" : ""
+          }>clamp</option><option value="block" ${
+      getRuleField("guardrails.margin_mode") === "block" ? "selected" : ""
+    }>block</option></select></div>
+        </div>
+
+        <h3>Validity + Inventory</h3>
+        <div class="aurora-repricer-grid">
+          <div class="aurora-repricer-field"><label>Start at</label><input type="datetime-local" data-rule-field="validity.start_at" data-rule-type="datetime" value="${esc(
+            datetimeInputValue(getRuleField("validity.start_at"))
+          )}"></div>
+          <div class="aurora-repricer-field"><label>End at</label><input type="datetime-local" data-rule-field="validity.end_at" data-rule-type="datetime" value="${esc(
+            datetimeInputValue(getRuleField("validity.end_at"))
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Max qty/order</label><input type="number" data-rule-field="inventory_rules.max_qty_per_order" data-rule-type="int-null" value="${esc(
+            num("inventory_rules.max_qty_per_order")
+          )}"></div>
+          <div class="aurora-repricer-field"><label>Apply if stock &gt;</label><input type="number" data-rule-field="inventory_rules.apply_if_stock_gt" data-rule-type="int-null" value="${esc(
+            num("inventory_rules.apply_if_stock_gt")
+          )}"></div>
+        </div>
+
+        <p class="aurora-repricer-help" id="aurora-rule-preview-output">${esc(previewText)}</p>
+      </section>
+    `;
+  };
+
+  const loadRules = async (force) => {
+    if (state.rules.loaded && !force) return;
+    try {
+      const response = await apiFetch(route("rulesList"), "GET", undefined, { lockOnAuth: true });
+      state.rules.items = Array.isArray(response?.items) ? response.items : [];
+      state.rules.loaded = true;
+      if (!state.rules.selectedId && state.rules.items.length > 0) {
+        state.rules.selectedId = Number(state.rules.items[0].id || 0);
+      }
+      if (state.rules.selectedId > 0) {
+        const rule = await apiFetch(routeWithId("ruleGet", state.rules.selectedId), "GET", undefined, { lockOnAuth: true });
+        state.rules.draft = normalizeRuleFromApi(rule);
+      }
+    } catch (err) {
+      showNotice("warning", err.message || "Impossibile caricare le regole repricer.");
+    }
+  };
+
   const renderWarnings = (data) => {
     const warnings = [];
     const scheduler = data?.repricer?.scheduler || {};
@@ -689,6 +1072,7 @@
       ${renderWarnings(data)}
       ${buildOverview(repricer, data.health?.status || "WARN")}
       ${buildGuidedRun(repricer)}
+      ${buildRuleEditorSection()}
       ${buildRunDetails(repricer)}
       ${buildDecisionSection(repricer)}
       ${buildSchedulerSection(repricer)}
@@ -876,6 +1260,100 @@
       });
     });
 
+    const ruleSelect = document.getElementById("aurora-rule-select");
+    if (ruleSelect) {
+      ruleSelect.addEventListener("change", async () => {
+        const id = Number(ruleSelect.value || 0);
+        state.rules.selectedId = id;
+        state.rules.preview = null;
+        if (id <= 0) {
+          state.rules.draft = defaultRuleDraft();
+          render();
+          return;
+        }
+        try {
+          const row = await apiFetch(routeWithId("ruleGet", id), "GET", undefined, { lockOnAuth: true });
+          state.rules.draft = normalizeRuleFromApi(row);
+          render();
+        } catch (err) {
+          showNotice("warning", err.message || "Impossibile caricare la regola selezionata.");
+        }
+      });
+    }
+
+    const ruleNewBtn = document.getElementById("aurora-rule-new");
+    if (ruleNewBtn) {
+      ruleNewBtn.addEventListener("click", () => {
+        state.rules.selectedId = 0;
+        state.rules.preview = null;
+        state.rules.draft = defaultRuleDraft();
+        render();
+      });
+    }
+
+    root.querySelectorAll("[data-rule-field]").forEach((input) => {
+      const eventName = input.type === "checkbox" || input.tagName === "SELECT" ? "change" : "input";
+      input.addEventListener(eventName, () => {
+        const path = input.getAttribute("data-rule-field");
+        const type = input.getAttribute("data-rule-type") || "text";
+        let value = input.value;
+        if (type === "bool") {
+          value = !!input.checked;
+        } else if (type === "int") {
+          value = Math.max(0, parseInt(input.value || "0", 10) || 0);
+        } else if (type === "int-null") {
+          value = String(input.value || "").trim() === "" ? null : Math.max(0, parseInt(input.value || "0", 10) || 0);
+        } else if (type === "float-null") {
+          value = String(input.value || "").trim() === "" ? null : Math.max(0, parseFloat(input.value || "0") || 0);
+        } else if (type === "csv-int") {
+          value = csvToIntArray(input.value);
+        } else if (type === "csv-text") {
+          value = csvToTextArray(input.value);
+        } else if (type === "datetime") {
+          value = datetimeApiValue(input.value);
+        }
+        setRuleField(path, value);
+      });
+    });
+
+    const ruleSaveBtn = document.getElementById("aurora-rule-save");
+    if (ruleSaveBtn) {
+      ruleSaveBtn.addEventListener("click", async () => {
+        const payload = { rule: state.rules.draft };
+        const selectedId = Number(state.rules.selectedId || 0);
+        if (!state.rules.draft?.rule_meta?.name) {
+          showNotice("warning", "Il nome regola è obbligatorio.");
+          return;
+        }
+        if (selectedId > 0) {
+          await runAction(ruleSaveBtn, routeWithId("ruleUpdate", selectedId), payload, () => {
+            showNotice("success", `Regola #${selectedId} aggiornata.`);
+          }, "PUT");
+        } else {
+          const res = await runAction(ruleSaveBtn, route("ruleCreate"), payload, (result) => {
+            showNotice("success", `Regola creata (#${result.rule_id || "n/a"}).`);
+          });
+          state.rules.selectedId = Number(res?.rule_id || 0);
+        }
+        await loadRules(true);
+        render();
+      });
+    }
+
+    const rulePreviewBtn = document.getElementById("aurora-rule-preview");
+    if (rulePreviewBtn) {
+      rulePreviewBtn.addEventListener("click", async () => {
+        const selectedId = Number(state.rules.selectedId || 0);
+        if (selectedId <= 0) {
+          showNotice("warning", "Salva prima la regola per eseguire preview scope.");
+          return;
+        }
+        const result = await runAction(rulePreviewBtn, routeWithId("rulePreview", selectedId), { limit: 200 }, undefined);
+        state.rules.preview = result;
+        render();
+      });
+    }
+
     const rollbackRunIdBtn = document.getElementById("aurora-rollback-runid");
     if (rollbackRunIdBtn) {
       rollbackRunIdBtn.addEventListener("click", async () => {
@@ -1032,5 +1510,7 @@
     );
   });
 
-  refreshStatus();
+  loadRules(true).finally(() => {
+    refreshStatus();
+  });
 })();

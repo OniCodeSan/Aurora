@@ -184,6 +184,17 @@
   max-width: 280px;
 }
 
+#aurora-rule-editor .aurora-repricer-field input[type="number"],
+#aurora-rule-editor .aurora-repricer-field select,
+#aurora-rule-editor .aurora-repricer-field input[type="text"],
+#aurora-rule-editor .aurora-repricer-field input[type="datetime-local"] {
+  max-width: none;
+}
+
+#aurora-rule-editor h3 {
+  margin-top: 8px;
+}
+
 .aurora-repricer-radio-group {
   display: flex;
   gap: 12px;

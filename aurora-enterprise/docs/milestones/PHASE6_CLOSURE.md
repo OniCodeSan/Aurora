@@ -91,3 +91,55 @@ Output chiave osservato:
   - `rest_url("aurora/v1/") => http://localhost:8080/index.php?rest_route=/aurora/v1/`
 
 Log tecnico locale (non versionato): `/tmp/phase6_smoke.txt`
+
+## Repricer Rules v1
+
+### Endpoints
+
+- `GET /aurora/v1/repricer/rules`
+- `GET /aurora/v1/repricer/rules/<id>`
+- `POST /aurora/v1/repricer/rules`
+- `PUT /aurora/v1/repricer/rules/<id>`
+- `POST /aurora/v1/repricer/rules/<id>/preview-scope`
+
+Tutti gli endpoint usano il medesimo hardening del controller ops (`check_permissions` + nonce opzionale + capability check).
+
+### Schema (rule_json)
+
+Top-level:
+- `rule_meta`
+- `scope`
+- `conditions`
+- `pricing_strategy`
+- `guardrails`
+- `inventory_rules`
+- `validity`
+
+Campi principali:
+- `rule_meta.name`, `rule_meta.priority`, `rule_meta.enabled`, `rule_meta.exclusive`
+- `scope.product_ids`, `scope.category_ids`, `scope.brand_ids|brand_terms`, `scope.erp_stock_condition`, `scope.urgent_only`
+- `conditions.cost_min|max`, `conditions.competitor_position_min|max`, `conditions.min_reviews`
+- `pricing_strategy.type` = `markup|margin|manual|competitor`
+- `guardrails.min|max price`, `guardrails.min_margin_*`, `guardrails.max_raise|max_drop`, `guardrails.rounding`
+- `validity.start_at|end_at`
+
+### Smoke commands
+
+```bash
+cd /Users/mariano/.openclaw/workspace/wordpress
+docker compose exec worker php /var/www/html/wp-content/plugins/aurora-enterprise/tools/stress/rest_call.php "/aurora/v1/repricer/rules" "{}"
+```
+
+Create example rule:
+
+```bash
+cd /Users/mariano/.openclaw/workspace/wordpress
+docker compose exec worker php /var/www/html/wp-content/plugins/aurora-enterprise/tools/stress/rest_call.php "/aurora/v1/repricer/rules" "{\"rule\":{\"rule_meta\":{\"name\":\"rule_ui_smoke\",\"priority\":10,\"enabled\":true,\"exclusive\":true},\"scope\":{\"product_ids\":[207222]},\"conditions\":{},\"pricing_strategy\":{\"type\":\"manual\",\"manual_mode\":\"keep\"},\"guardrails\":{\"rounding\":\"none\"},\"inventory_rules\":{},\"validity\":{}}}"
+```
+
+Preview scope:
+
+```bash
+cd /Users/mariano/.openclaw/workspace/wordpress
+docker compose exec worker php /var/www/html/wp-content/plugins/aurora-enterprise/tools/stress/rest_call.php "/aurora/v1/repricer/rules/1/preview-scope" "{\"limit\":50}"
+```

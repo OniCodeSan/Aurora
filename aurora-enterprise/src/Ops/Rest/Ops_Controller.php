@@ -5,6 +5,8 @@ use Aurora\Enterprise\Ops\System_Status_Provider;
 use Aurora\Enterprise\Ops\Ops_Run_Manager;
 use Aurora\Enterprise\Ops\Ops_Dispatcher;
 use Aurora\Enterprise\Repricer\RepriceAssignmentRepository;
+use Aurora\Enterprise\Repricer\RepriceRuleRepository;
+use Aurora\Enterprise\Repricer\RepriceRuleEngine;
 use WP_REST_Server;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -171,6 +173,42 @@ class Ops_Controller {
         register_rest_route( 'aurora/v1', '/repricer/assignments/(?P<id>\\d+)', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [ $this, 'repricer_assignments_get' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'repricer_rules_list' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_rules_create' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules/(?P<id>\\d+)', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'repricer_rules_get' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules/(?P<id>\\d+)', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_rules_get' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules/(?P<id>\\d+)', [
+            'methods'             => [ 'PUT', 'PATCH' ],
+            'callback'            => [ $this, 'repricer_rules_update' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/repricer/rules/(?P<id>\\d+)/preview-scope', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'repricer_rules_preview_scope' ],
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
     }
@@ -817,6 +855,89 @@ class Ops_Controller {
         return $row;
     }
 
+    public function repricer_rules_list( WP_REST_Request $request ) {
+        $repo = new RepriceRuleRepository();
+        $limit  = $this->int_param( $request, 'limit', 50, 1, 200 );
+        $offset = $this->int_param( $request, 'offset', 0, 0, 1000000 );
+        return [
+            'items' => $repo->list( $limit, $offset ),
+        ];
+    }
+
+    public function repricer_rules_get( WP_REST_Request $request ) {
+        $repo = new RepriceRuleRepository();
+        $id = (int) $request['id'];
+        $row = $repo->get( $id );
+        if ( ! $row ) {
+            return new WP_Error( 'aurora_repricer_rule_not_found', 'Rule not found', [ 'status' => 404 ] );
+        }
+        return $row;
+    }
+
+    public function repricer_rules_create( WP_REST_Request $request ) {
+        $raw = $request->get_json_params();
+        if ( ( ! is_array( $raw ) || empty( $raw ) ) && is_array( $request->get_param( 'rule' ) ) ) {
+            $raw = [ 'rule' => $request->get_param( 'rule' ) ];
+        }
+        if ( ! is_array( $raw ) || empty( $raw ) ) {
+            return $this->repricer_rules_list( $request );
+        }
+        if ( isset( $raw['rule'] ) && is_array( $raw['rule'] ) && empty( $raw['rule'] ) ) {
+            return $this->repricer_rules_list( $request );
+        }
+        $ruleJson = $this->sanitize_rule_payload( $request );
+        if ( is_wp_error( $ruleJson ) ) {
+            return $ruleJson;
+        }
+        $repo = new RepriceRuleRepository();
+        $id = $repo->create( $ruleJson, get_current_user_id() );
+        if ( $id <= 0 ) {
+            return new WP_Error( 'aurora_repricer_rule_create_failed', 'Unable to create rule', [ 'status' => 500 ] );
+        }
+        return new WP_REST_Response( [ 'ok' => true, 'rule_id' => $id ], 200 );
+    }
+
+    public function repricer_rules_update( WP_REST_Request $request ) {
+        $id = (int) $request['id'];
+        if ( $id <= 0 ) {
+            return new WP_Error( 'aurora_repricer_rule_bad_request', 'Invalid rule id', [ 'status' => 400 ] );
+        }
+        $ruleJson = $this->sanitize_rule_payload( $request );
+        if ( is_wp_error( $ruleJson ) ) {
+            return $ruleJson;
+        }
+        $repo = new RepriceRuleRepository();
+        $ok = $repo->update( $id, $ruleJson, get_current_user_id() );
+        if ( ! $ok ) {
+            return new WP_Error( 'aurora_repricer_rule_update_failed', 'Unable to update rule', [ 'status' => 500 ] );
+        }
+        return new WP_REST_Response( [ 'ok' => true, 'rule_id' => $id ], 200 );
+    }
+
+    public function repricer_rules_preview_scope( WP_REST_Request $request ) {
+        $repo = new RepriceRuleRepository();
+        $id = (int) $request['id'];
+        $row = $repo->get( $id );
+        if ( ! $row ) {
+            return new WP_Error( 'aurora_repricer_rule_not_found', 'Rule not found', [ 'status' => 404 ] );
+        }
+        $ruleJson = is_array( $row['rule_json'] ?? null ) ? $row['rule_json'] : [];
+        $scope = is_array( $ruleJson['scope'] ?? null ) ? $ruleJson['scope'] : [];
+        $engine = new RepriceRuleEngine();
+        $limit = $this->int_param( $request, 'limit', 200, 1, 500 );
+        $preview = $engine->resolve_scope_products( $scope, $limit );
+        return new WP_REST_Response(
+            [
+                'ok'            => true,
+                'rule_id'       => $id,
+                'resolved_count'=> (int) ( $preview['resolved_count'] ?? 0 ),
+                'sample_ids'    => array_values( $preview['sample_ids'] ?? [] ),
+                'warnings'      => array_values( $preview['warnings'] ?? [] ),
+            ],
+            200
+        );
+    }
+
     public function repricer_scheduler_tick( WP_REST_Request $request ) {
         try {
             $scheduler = new \Aurora\Enterprise\Repricer\RepriceScheduler();
@@ -1153,6 +1274,241 @@ class Ops_Controller {
         }
 
         return $payload;
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    private function sanitize_rule_payload( WP_REST_Request $request ) {
+        $raw = $request->get_json_params();
+        if ( ! is_array( $raw ) ) {
+            $raw = [];
+        }
+        if ( empty( $raw ) && is_array( $request->get_param( 'rule' ) ) ) {
+            $raw = [ 'rule' => $request->get_param( 'rule' ) ];
+        }
+        $rule = is_array( $raw['rule'] ?? null ) ? $raw['rule'] : $raw;
+        $ruleMeta = is_array( $rule['rule_meta'] ?? null ) ? $rule['rule_meta'] : [];
+
+        $name = sanitize_text_field( (string) ( $ruleMeta['name'] ?? '' ) );
+        if ( '' === $name ) {
+            return new WP_Error( 'aurora_repricer_rule_name_required', 'rule_meta.name is required', [ 'status' => 400 ] );
+        }
+        $priority = max( 0, min( 1000000, (int) ( $ruleMeta['priority'] ?? 100 ) ) );
+        $enabled = $this->bool_value( $ruleMeta['enabled'] ?? true, true );
+        $exclusive = $this->bool_value( $ruleMeta['exclusive'] ?? false, false );
+
+        $scopeRaw = is_array( $rule['scope'] ?? null ) ? $rule['scope'] : [];
+        $erpStockCondition = (string) ( $scopeRaw['erp_stock_condition'] ?? 'any' );
+        $scope = [
+            'product_ids'         => $this->sanitize_int_array( $scopeRaw['product_ids'] ?? [] ),
+            'brand_ids'           => $this->sanitize_int_array( $scopeRaw['brand_ids'] ?? [] ),
+            'brand_terms'         => $this->sanitize_text_array( $scopeRaw['brand_terms'] ?? [] ),
+            'category_ids'        => $this->sanitize_int_array( $scopeRaw['category_ids'] ?? [] ),
+            'supplier_ids'        => $this->sanitize_text_array( $scopeRaw['supplier_ids'] ?? [] ),
+            'product_type'        => $this->sanitize_text_array( $scopeRaw['product_type'] ?? [] ),
+            'line'                => $this->sanitize_text_array( $scopeRaw['line'] ?? [] ),
+            'erp_stock_condition' => in_array( $erpStockCondition, [ 'any', 'eq_0', 'gt_0' ], true ) ? $erpStockCondition : 'any',
+            'urgent_only'         => $this->bool_value( $scopeRaw['urgent_only'] ?? false, false ),
+        ];
+
+        $conditionsRaw = is_array( $rule['conditions'] ?? null ) ? $rule['conditions'] : [];
+        $conditions = [
+            'cost_min'                => $this->float_or_null( $conditionsRaw['cost_min'] ?? null, 0.0, 100000000.0 ),
+            'cost_max'                => $this->float_or_null( $conditionsRaw['cost_max'] ?? null, 0.0, 100000000.0 ),
+            'competitor_position_min' => $this->int_or_null( $conditionsRaw['competitor_position_min'] ?? null, 0, 1000000 ),
+            'competitor_position_max' => $this->int_or_null( $conditionsRaw['competitor_position_max'] ?? null, 0, 1000000 ),
+            'min_reviews'             => $this->int_or_null( $conditionsRaw['min_reviews'] ?? null, 0, 1000000 ),
+            'rotation_index'          => $this->sanitize_operator_condition( $conditionsRaw['rotation_index'] ?? null ),
+            'sold_last_30_days'       => $this->sanitize_operator_condition( $conditionsRaw['sold_last_30_days'] ?? null ),
+            'top_search_only'         => $this->bool_value( $conditionsRaw['top_search_only'] ?? false, false ),
+        ];
+
+        $strategyRaw = is_array( $rule['pricing_strategy'] ?? null ) ? $rule['pricing_strategy'] : [];
+        $strategyType = sanitize_text_field( (string) ( $strategyRaw['type'] ?? 'manual' ) );
+        if ( ! in_array( $strategyType, [ 'markup', 'margin', 'manual', 'competitor' ], true ) ) {
+            return new WP_Error( 'aurora_repricer_rule_invalid_strategy', 'pricing_strategy.type is invalid', [ 'status' => 400 ] );
+        }
+        $manualMode = (string) ( $strategyRaw['manual_mode'] ?? 'keep' );
+        $competitorMode = (string) ( $strategyRaw['competitor_mode'] ?? 'match' );
+        $pricingStrategy = [
+            'type'                  => $strategyType,
+            'markup_percent'        => $this->float_or_null( $strategyRaw['markup_percent'] ?? null, 0.0, 10000.0 ),
+            'markup_abs'            => $this->float_or_null( $strategyRaw['markup_abs'] ?? null, 0.0, 1000000.0 ),
+            'margin_target_percent' => $this->float_or_null( $strategyRaw['margin_target_percent'] ?? null, 0.0, 99.0 ),
+            'manual_mode'           => in_array( $manualMode, [ 'keep', 'override' ], true ) ? $manualMode : 'keep',
+            'manual_price'          => $this->float_or_null( $strategyRaw['manual_price'] ?? null, 0.0, 1000000.0 ),
+            'competitor_mode'       => in_array( $competitorMode, [ 'match', 'beat' ], true ) ? $competitorMode : 'match',
+            'competitor_delta'      => $this->float_or_null( $strategyRaw['competitor_delta'] ?? null, 0.0, 1000000.0 ),
+        ];
+
+        $guardrailsRaw = is_array( $rule['guardrails'] ?? null ) ? $rule['guardrails'] : [];
+        $rounding = sanitize_text_field( (string) ( $guardrailsRaw['rounding'] ?? 'none' ) );
+        if ( ! in_array( $rounding, [ 'none', 'x.99', 'x.49', 'step' ], true ) ) {
+            $rounding = 'none';
+        }
+        $marginMode = (string) ( $guardrailsRaw['margin_mode'] ?? 'clamp' );
+        $guardrails = [
+            'min_price'         => $this->float_or_null( $guardrailsRaw['min_price'] ?? null, 0.0, 1000000.0 ),
+            'max_price'         => $this->float_or_null( $guardrailsRaw['max_price'] ?? null, 0.0, 1000000.0 ),
+            'min_margin_percent'=> $this->float_or_null( $guardrailsRaw['min_margin_percent'] ?? null, 0.0, 1000.0 ),
+            'min_margin_abs'    => $this->float_or_null( $guardrailsRaw['min_margin_abs'] ?? null, 0.0, 1000000.0 ),
+            'max_raise_percent' => $this->float_or_null( $guardrailsRaw['max_raise_percent'] ?? null, 0.0, 1000.0 ),
+            'max_drop_percent'  => $this->float_or_null( $guardrailsRaw['max_drop_percent'] ?? null, 0.0, 1000.0 ),
+            'rounding'          => $rounding,
+            'step_value'        => $this->float_or_null( $guardrailsRaw['step_value'] ?? null, 0.0, 1000000.0 ),
+            'margin_mode'       => in_array( $marginMode, [ 'clamp', 'block' ], true ) ? $marginMode : 'clamp',
+        ];
+
+        $inventoryRaw = is_array( $rule['inventory_rules'] ?? null ) ? $rule['inventory_rules'] : [];
+        $inventory = [
+            'max_qty_per_order' => $this->int_or_null( $inventoryRaw['max_qty_per_order'] ?? null, 0, 1000000 ),
+            'apply_if_stock_gt' => $this->int_or_null( $inventoryRaw['apply_if_stock_gt'] ?? null, 0, 1000000 ),
+        ];
+
+        $validityRaw = is_array( $rule['validity'] ?? null ) ? $rule['validity'] : [];
+        $validity = [
+            'start_at' => $this->datetime_or_null( $validityRaw['start_at'] ?? null ),
+            'end_at'   => $this->datetime_or_null( $validityRaw['end_at'] ?? null ),
+        ];
+
+        return [
+            'rule_meta' => [
+                'name'      => $name,
+                'priority'  => $priority,
+                'enabled'   => $enabled,
+                'exclusive' => $exclusive,
+            ],
+            'scope'            => $scope,
+            'conditions'       => $conditions,
+            'pricing_strategy' => $pricingStrategy,
+            'guardrails'       => $guardrails,
+            'inventory_rules'  => $inventory,
+            'validity'         => $validity,
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function bool_value( $value, bool $default ) : bool {
+        if ( null === $value || '' === $value ) {
+            return $default;
+        }
+        if ( is_bool( $value ) ) {
+            return $value;
+        }
+        if ( is_numeric( $value ) ) {
+            return (int) $value === 1;
+        }
+        $clean = strtolower( trim( (string) $value ) );
+        if ( in_array( $clean, [ '1', 'true', 'yes', 'on' ], true ) ) {
+            return true;
+        }
+        if ( in_array( $clean, [ '0', 'false', 'no', 'off' ], true ) ) {
+            return false;
+        }
+        return $default;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<int>
+     */
+    private function sanitize_int_array( $value ) : array {
+        if ( ! is_array( $value ) ) {
+            return [];
+        }
+        $items = array_values( array_filter( array_map( 'intval', $value ), static fn( int $v ) : bool => $v > 0 ) );
+        return array_values( array_unique( $items ) );
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<int,string>
+     */
+    private function sanitize_text_array( $value ) : array {
+        if ( ! is_array( $value ) ) {
+            return [];
+        }
+        $items = [];
+        foreach ( $value as $item ) {
+            $clean = sanitize_text_field( (string) $item );
+            if ( '' !== $clean ) {
+                $items[] = $clean;
+            }
+        }
+        return array_values( array_unique( $items ) );
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function float_or_null( $value, float $min, float $max ) : ?float {
+        if ( null === $value || '' === $value || ! is_numeric( $value ) ) {
+            return null;
+        }
+        $float = (float) $value;
+        if ( $float < $min ) {
+            $float = $min;
+        }
+        if ( $float > $max ) {
+            $float = $max;
+        }
+        return $float;
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function int_or_null( $value, int $min, int $max ) : ?int {
+        if ( null === $value || '' === $value || ! is_numeric( $value ) ) {
+            return null;
+        }
+        $int = (int) $value;
+        if ( $int < $min ) {
+            $int = $min;
+        }
+        if ( $int > $max ) {
+            $int = $max;
+        }
+        return $int;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<string,mixed>|null
+     */
+    private function sanitize_operator_condition( $value ) : ?array {
+        if ( ! is_array( $value ) ) {
+            return null;
+        }
+        $operator = sanitize_text_field( (string) ( $value['operator'] ?? '' ) );
+        if ( ! in_array( $operator, [ '>', '>=', '<', '<=', '=', '!=' ], true ) ) {
+            return null;
+        }
+        $float = $this->float_or_null( $value['value'] ?? null, -100000000.0, 100000000.0 );
+        if ( null === $float ) {
+            return null;
+        }
+        return [
+            'operator' => $operator,
+            'value'    => $float,
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function datetime_or_null( $value ) : ?string {
+        if ( null === $value || '' === $value ) {
+            return null;
+        }
+        $stamp = strtotime( (string) $value );
+        if ( false === $stamp ) {
+            return null;
+        }
+        return gmdate( 'Y-m-d H:i:s', $stamp );
     }
 
     private function int_param( WP_REST_Request $request, string $key, int $default, int $min, int $max ) : int {

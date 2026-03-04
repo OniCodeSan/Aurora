@@ -22,6 +22,8 @@ class RepricePriceEngine {
         $override    = (string) ( $input['override'] ?? '' ) === '1';
         $strategy    = $this->strategy_key( $config['strategy'] ?? 'maintain_margin' );
         $marginMode  = $this->margin_mode( $config['margin_mode'] ?? 'clamp' );
+        $strategyReasonCode = $this->clean_string( (string) ( $config['strategy_reason_code'] ?? '' ) );
+        $candidateOverride = $this->nullable_float( $config['candidate_price_override'] ?? null );
 
         $result = [
             'rule_applied'    => 'no_change',
@@ -74,7 +76,10 @@ class RepricePriceEngine {
         $candidate = $oldPrice;
         $reasons   = [];
 
-        if ( 'match_competitor' === $strategy ) {
+        if ( null !== $candidateOverride && $candidateOverride > 0 ) {
+            $candidate = $candidateOverride;
+            $reasons[] = '' !== $strategyReasonCode ? $strategyReasonCode : 'strategy_manual';
+        } elseif ( 'match_competitor' === $strategy || 'competitor' === $strategy ) {
             if ( $competitor !== null && $competitor > 0 ) {
                 $candidate = $competitor;
                 $reasons[] = 'strategy_match_competitor';
@@ -97,14 +102,14 @@ class RepricePriceEngine {
             $targetAbs = $this->nullable_float( $config['target_margin_abs'] ?? null );
             if ( $targetPct !== null && $targetPct > 0 && $targetPct < 100 ) {
                 $candidate = max( $candidate, ( $cost / ( 1.0 - ( $targetPct / 100.0 ) ) ) );
-                $reasons[] = 'strategy_maintain_margin';
+                $reasons[] = 'margin' === $strategy ? 'strategy_margin' : 'strategy_maintain_margin';
             }
             if ( $targetAbs !== null && $targetAbs > 0 ) {
                 $candidate = max( $candidate, ( $cost + $targetAbs ) );
-                $reasons[] = 'strategy_maintain_margin';
+                $reasons[] = 'margin' === $strategy ? 'strategy_margin' : 'strategy_maintain_margin';
             }
             if ( empty( $reasons ) ) {
-                $reasons[] = 'strategy_maintain_margin';
+                $reasons[] = 'margin' === $strategy ? 'strategy_margin' : 'strategy_maintain_margin';
             }
         }
 
@@ -254,7 +259,7 @@ class RepricePriceEngine {
 
     private function strategy_key( string $value ) : string {
         $clean = strtolower( trim( $value ) );
-        if ( in_array( $clean, [ 'maintain_margin', 'match_competitor', 'beat_competitor' ], true ) ) {
+        if ( in_array( $clean, [ 'maintain_margin', 'margin', 'match_competitor', 'beat_competitor', 'manual', 'markup', 'competitor' ], true ) ) {
             return $clean;
         }
         return 'maintain_margin';
@@ -327,6 +332,13 @@ class RepricePriceEngine {
         return round( $value, 4 );
     }
 
+    private function clean_string( string $value ) : string {
+        if ( function_exists( 'sanitize_text_field' ) ) {
+            return (string) sanitize_text_field( $value );
+        }
+        return trim( preg_replace( '/[\x00-\x1F\x7F]/', '', $value ) ?? '' );
+    }
+
     /**
      * @param array<int,string> $reasonCodes
      */
@@ -346,6 +358,11 @@ class RepricePriceEngine {
             'rounded',
             'strategy_beat_competitor',
             'strategy_match_competitor',
+            'strategy_markup',
+            'strategy_manual_override',
+            'strategy_manual_keep',
+            'strategy_manual',
+            'strategy_margin',
             'strategy_maintain_margin',
             'no_change',
         ];

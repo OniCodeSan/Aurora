@@ -58,6 +58,7 @@ class Upgrade_Schema {
         $this->ensureCheckpointTable();
         $this->ensureRepriceDecisions();
         $this->ensureRepriceAssignments();
+        $this->ensureRepriceRules();
         $this->ensureRepriceProgress();
     }
 
@@ -307,6 +308,42 @@ class Upgrade_Schema {
         ) {$charset};";
         dbDelta( $sql );
         WP_CLI::log( 'Ensured repricer assignments schema' );
+    }
+
+    private function ensureRepriceRules() : void {
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        $rulesTable = $this->prefix . 'aurora_reprice_rules';
+        $auditTable = $this->prefix . 'aurora_reprice_rules_audit';
+        $charset = $this->db->get_charset_collate();
+
+        $rulesSql = "CREATE TABLE {$rulesTable} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name VARCHAR(190) NOT NULL,
+            priority INT NOT NULL DEFAULT 100,
+            is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+            is_exclusive TINYINT(1) NOT NULL DEFAULT 0,
+            rule_json LONGTEXT NOT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY priority_enabled (priority, is_enabled),
+            KEY updated_at (updated_at)
+        ) {$charset};";
+        dbDelta( $rulesSql );
+
+        $auditSql = "CREATE TABLE {$auditTable} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            rule_id BIGINT UNSIGNED NOT NULL,
+            action VARCHAR(32) NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            before_json LONGTEXT NULL,
+            after_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY rule_id_created (rule_id, created_at)
+        ) {$charset};";
+        dbDelta( $auditSql );
+        WP_CLI::log( 'Ensured repricer rules schema' );
     }
 
     private function ensureRepriceProgress() : void {

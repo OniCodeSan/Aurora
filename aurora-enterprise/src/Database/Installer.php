@@ -217,6 +217,32 @@ class Installer {
             KEY priority (priority)
         ) {$charset};";
 
+        $schema[] = "CREATE TABLE {$prefix}aurora_reprice_rules (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name VARCHAR(190) NOT NULL,
+            priority INT NOT NULL DEFAULT 100,
+            is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+            is_exclusive TINYINT(1) NOT NULL DEFAULT 0,
+            rule_json LONGTEXT NOT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY priority_enabled (priority, is_enabled),
+            KEY updated_at (updated_at)
+        ) {$charset};";
+
+        $schema[] = "CREATE TABLE {$prefix}aurora_reprice_rules_audit (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            rule_id BIGINT UNSIGNED NOT NULL,
+            action VARCHAR(32) NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            before_json LONGTEXT NULL,
+            after_json LONGTEXT NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY rule_id_created (rule_id, created_at)
+        ) {$charset};";
+
         $schema[] = "CREATE TABLE {$prefix}aurora_snapshot_versions (
             table_name VARCHAR(64) NOT NULL,
             current_version BIGINT UNSIGNED NOT NULL DEFAULT 1,

@@ -73,6 +73,11 @@ class Repricer_Page {
                 'runAll'    => 'repricer/run-all',
                 'preview'   => 'repricer/preview',
                 'rollback'  => 'repricer/rollback',
+                'rulesList' => 'repricer/rules',
+                'ruleGet'   => 'repricer/rules/%id%',
+                'ruleCreate'=> 'repricer/rules',
+                'ruleUpdate'=> 'repricer/rules/%id%',
+                'rulePreview'=> 'repricer/rules/%id%/preview-scope',
             ],
         ] );
     }

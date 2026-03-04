@@ -7,6 +7,8 @@ use Aurora\Enterprise\Ops\Ops_Run_Manager;
 use Aurora\Enterprise\Support\Logger;
 use Aurora\Enterprise\Repricer\RepriceScopeResolver;
 use Aurora\Enterprise\Repricer\RepriceAssignmentRepository;
+use Aurora\Enterprise\Repricer\RepriceRuleRepository;
+use Aurora\Enterprise\Repricer\RepriceRuleEngine;
 use wpdb;
 
 class RepriceRunManager {
@@ -16,6 +18,8 @@ class RepriceRunManager {
     private RepriceLockManager $lock;
     private RepriceScopeResolver $resolver;
     private RepriceAssignmentRepository $assignments;
+    private RepriceRuleRepository $rules;
+    private RepriceRuleEngine $ruleEngine;
     private RepricePriceEngine $priceEngine;
     private wpdb $db;
     /** @var array<string,bool>|null */
@@ -28,6 +32,8 @@ class RepriceRunManager {
         $this->lock   = $lock ?? new RepriceLockManager();
         $this->resolver = $resolver ?? new RepriceScopeResolver();
         $this->assignments = $assignments ?? new RepriceAssignmentRepository();
+        $this->rules = new RepriceRuleRepository();
+        $this->ruleEngine = new RepriceRuleEngine();
         $this->priceEngine = new RepricePriceEngine();
         global $wpdb;
         $this->db = $wpdb;
@@ -130,6 +136,7 @@ class RepriceRunManager {
             'no_change'    => 0,
             'floor_margin' => 0,
         ];
+        $activeRules = $this->rules->list_enabled_ordered( 500 );
         $decisionsWritten = 0;
         $selected = 0;
         $appliedCount = 0;
@@ -206,7 +213,7 @@ class RepriceRunManager {
             $selected += $selectedCount;
 
             foreach ( $ids as $productId ) {
-                $decision = $this->decide( $productId, $config );
+                $decision = $this->decide( $productId, $config, $activeRules );
                 $decision['run_id']     = $runId;
                 $decision['created_at'] = current_time( 'mysql', true );
                 $applyResult = $this->maybe_apply( $productId, $decision, $config );
@@ -437,41 +444,86 @@ class RepriceRunManager {
         $this->lock->release( $owner );
     }
 
-    /** @param array<string,mixed> $config */
-    private function decide( int $productId, array $config ) : array {
-        $override = get_post_meta( $productId, 'aurora_price_override', true );
-        $sku      = get_post_meta( $productId, '_sku', true );
-        $priceRaw = get_post_meta( $productId, '_price', true );
-        $price    = '' === $priceRaw ? null : (float) $priceRaw;
-        $costRaw  = get_post_meta( $productId, '_aurora_cost', true );
+    /**
+     * @param array<string,mixed> $config
+     * @param array<int,array<string,mixed>> $activeRules
+     */
+    private function decide( int $productId, array $config, array $activeRules = [] ) : array {
+        $allMeta = get_post_meta( $productId );
+        $metaValue = static function ( array $meta, string $key ) {
+            if ( ! isset( $meta[ $key ] ) || ! is_array( $meta[ $key ] ) || ! isset( $meta[ $key ][0] ) ) {
+                return '';
+            }
+            return $meta[ $key ][0];
+        };
+
+        $override = (string) $metaValue( $allMeta, 'aurora_price_override' );
+        $sku = (string) $metaValue( $allMeta, '_sku' );
+        $priceRaw = $metaValue( $allMeta, '_price' );
+        $price = '' === $priceRaw ? null : (float) $priceRaw;
+        $costRaw = $metaValue( $allMeta, '_aurora_cost' );
         if ( '' === $costRaw ) {
-            $costRaw = get_post_meta( $productId, '_cost', true );
+            $costRaw = $metaValue( $allMeta, '_cost' );
         }
         $cost = '' === $costRaw ? null : (float) $costRaw;
-        $competitorRaw = get_post_meta( $productId, '_aurora_competitor_price', true );
+        $competitorRaw = $metaValue( $allMeta, '_aurora_competitor_price' );
         $competitor = '' === $competitorRaw ? null : (float) $competitorRaw;
-        $minPriceRaw = get_post_meta( $productId, '_aurora_min_price', true );
-        $maxPriceRaw = get_post_meta( $productId, '_aurora_max_price', true );
-        $mapRaw      = get_post_meta( $productId, '_aurora_map_price', true );
+        $minPriceRaw = $metaValue( $allMeta, '_aurora_min_price' );
+        $maxPriceRaw = $metaValue( $allMeta, '_aurora_max_price' );
+        $mapRaw = $metaValue( $allMeta, '_aurora_map_price' );
         if ( '' === $mapRaw ) {
-            $mapRaw = get_post_meta( $productId, '_map_price', true );
+            $mapRaw = $metaValue( $allMeta, '_map_price' );
         }
         $minPrice = '' === $minPriceRaw ? null : (float) $minPriceRaw;
         $maxPrice = '' === $maxPriceRaw ? null : (float) $maxPriceRaw;
         $mapPrice = '' === $mapRaw ? null : (float) $mapRaw;
 
-        $engineResult = $this->priceEngine->evaluate(
-            [
-                'old_price'         => $price,
-                'cost'              => $cost,
-                'override'          => $override,
-                'competitor_price'  => $competitor,
-                'min_price'         => $minPrice,
-                'max_price'         => $maxPrice,
-                'map_price'         => $mapPrice,
-            ],
-            $config
-        );
+        $engineResult = null;
+        if ( ! empty( $activeRules ) ) {
+            $brandTax = taxonomy_exists( 'product_brand' ) ? 'product_brand' : ( taxonomy_exists( 'pa_brand' ) ? 'pa_brand' : null );
+            $categoryIds = wp_get_object_terms( $productId, 'product_cat', [ 'fields' => 'ids' ] );
+            $brandIds = $brandTax ? wp_get_object_terms( $productId, $brandTax, [ 'fields' => 'ids' ] ) : [];
+            $productTypes = wp_get_object_terms( $productId, 'product_type', [ 'fields' => 'slugs' ] );
+
+            $context = [
+                'product_id'          => $productId,
+                'old_price'           => $price,
+                'cost'                => $cost,
+                'override'            => $override,
+                'competitor_price'    => $competitor,
+                'min_price'           => $minPrice,
+                'max_price'           => $maxPrice,
+                'map_price'           => $mapPrice,
+                'stock_qty'           => $metaValue( $allMeta, '_stock' ),
+                'supplier_id'         => (string) $metaValue( $allMeta, '_aurora_supplier_id' ),
+                'product_type'        => ! empty( $productTypes ) && is_array( $productTypes ) ? (string) reset( $productTypes ) : (string) $metaValue( $allMeta, '_aurora_product_type' ),
+                'line'                => (string) $metaValue( $allMeta, '_aurora_line' ),
+                'urgent_only'         => in_array( strtolower( (string) $metaValue( $allMeta, '_aurora_urgent' ) ), [ '1', 'true', 'yes', 'on' ], true ),
+                'top_search_only'     => in_array( strtolower( (string) $metaValue( $allMeta, '_aurora_top_search' ) ), [ '1', 'true', 'yes', 'on' ], true ),
+                'competitor_position' => (int) $metaValue( $allMeta, '_aurora_competitor_position' ),
+                'reviews_count'       => (int) $metaValue( $allMeta, '_wc_review_count' ),
+                'rotation_index'      => $metaValue( $allMeta, '_aurora_rotation_index' ),
+                'sold_last_30_days'   => $metaValue( $allMeta, '_aurora_sold_last_30_days' ),
+                'category_ids'        => is_array( $categoryIds ) ? array_map( 'intval', $categoryIds ) : [],
+                'brand_ids'           => is_array( $brandIds ) ? array_map( 'intval', $brandIds ) : [],
+            ];
+            $engineResult = $this->ruleEngine->evaluate_rules_for_product( $activeRules, $context, $config );
+        }
+
+        if ( ! is_array( $engineResult ) ) {
+            $engineResult = $this->priceEngine->evaluate(
+                [
+                    'old_price'         => $price,
+                    'cost'              => $cost,
+                    'override'          => $override,
+                    'competitor_price'  => $competitor,
+                    'min_price'         => $minPrice,
+                    'max_price'         => $maxPrice,
+                    'map_price'         => $mapPrice,
+                ],
+                $config
+            );
+        }
 
         $reasonCodes = $engineResult['reason_codes'] ?? [];
         if ( ! is_array( $reasonCodes ) ) {
@@ -505,7 +557,7 @@ class RepriceRunManager {
             'strategy_rule_id' => isset( $engineResult['strategy_rule_id'] ) ? (string) $engineResult['strategy_rule_id'] : null,
             'reason_code'   => (string) ( $engineResult['reason_code'] ?? 'no_change' ),
             'reason_codes_json' => wp_json_encode( $reasonCodes ),
-            'reason'        => $reasonText,
+            'reason'        => ! empty( $engineResult['price_rule_name'] ) ? ( $reasonText . '|rule=' . sanitize_text_field( (string) $engineResult['price_rule_name'] ) ) : $reasonText,
             'audit_json'    => $engineResult['audit_json'] ?? null,
             'applied'       => 0,
             'applied_at_utc'=> null,
