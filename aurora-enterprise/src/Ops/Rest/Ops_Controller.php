@@ -26,6 +26,18 @@ class Ops_Controller {
             'permission_callback' => [ $this, 'check_permissions' ],
         ] );
 
+        register_rest_route( 'aurora/v1', '/ops-ui-status', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [ $this, 'get_ops_ui_status' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
+        register_rest_route( 'aurora/v1', '/ops-ui-status', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'get_ops_ui_status' ],
+            'permission_callback' => [ $this, 'check_permissions' ],
+        ] );
+
         register_rest_route( 'aurora/v1', '/trigger', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [ $this, 'trigger' ],
@@ -165,6 +177,293 @@ class Ops_Controller {
 
     public function get_status() : WP_REST_Response {
         return new WP_REST_Response( $this->provider->get_status() );
+    }
+
+    public function get_ops_ui_status() : WP_REST_Response {
+        global $wpdb;
+
+        $table      = $wpdb->prefix . 'aurora_ops_runs';
+        $exists     = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        $queueStats = \Aurora\Enterprise\Queue\Queue_Manager::instance()->stats();
+        $queue = [
+            'price'      => (int) ( $queueStats['price'] ?? 0 ),
+            'stock'      => (int) ( $queueStats['stock'] ?? 0 ),
+            'visibility' => (int) ( $queueStats['visibility'] ?? 0 ),
+            'feed'       => (int) ( $queueStats['feed'] ?? 0 ),
+            'dead'       => (int) ( $queueStats['dead'] ?? 0 ),
+        ];
+        $queue['backlog_total'] = $queue['price'] + $queue['stock'] + $queue['visibility'] + $queue['feed'];
+        $queue['oldest_pending_seconds'] = null;
+        $queue['retryable_dead'] = 0;
+        $queue['active_leases'] = 0;
+        $queue['stale_leases'] = 0;
+
+        $queueTable = $wpdb->prefix . 'product_index_queue';
+        $queueExists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $queueTable ) );
+        if ( $queueExists ) {
+            $oldestPending = $wpdb->get_var(
+                "SELECT TIMESTAMPDIFF(SECOND, MIN(created_at), UTC_TIMESTAMP())
+                 FROM {$queueTable}
+                 WHERE status = 'pending'"
+            );
+            $queue['oldest_pending_seconds'] = null !== $oldestPending ? (int) $oldestPending : null;
+            $queue['retryable_dead'] = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$queueTable} WHERE status = 'dead' AND attempts < 5" );
+            $queue['active_leases'] = (int) $wpdb->get_var(
+                "SELECT COUNT(*)
+                 FROM {$queueTable}
+                 WHERE status = 'processing'
+                   AND lease_expires_at IS NOT NULL
+                   AND lease_expires_at > UTC_TIMESTAMP()"
+            );
+            $queue['stale_leases'] = (int) $wpdb->get_var(
+                "SELECT COUNT(*)
+                 FROM {$queueTable}
+                 WHERE status = 'processing'
+                   AND lease_expires_at IS NOT NULL
+                   AND lease_expires_at <= UTC_TIMESTAMP()"
+            );
+        }
+
+        $empty = [
+            'ok'                  => true,
+            'generated_at_utc'    => gmdate( 'Y-m-d H:i:s' ),
+            'health'              => [
+                'status'  => 'WARN',
+                'reasons' => [ 'ops_runs_table_missing' ],
+            ],
+            'queue'               => $queue,
+            'ops_errors'          => [
+                'filtered' => 0,
+                'total'    => 0,
+            ],
+            'incidents'           => [
+                'summary' => [
+                    'errors_24h'            => 0,
+                    'unique_ops_impacted'   => 0,
+                    'last_incident_at'      => null,
+                    'most_frequent_op'      => null,
+                ],
+                'items' => [],
+            ],
+            'action_scheduler'    => [
+                'pending'  => 0,
+                'past_due' => 0,
+            ],
+            'config'              => [
+                'wp_cron_enabled' => ! ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ),
+            ],
+            'diagnostics'         => [
+                'recent_ops_errors'        => 0,
+                'snapshot_alignment_raw'   => null,
+                'download_status_supported'=> true,
+            ],
+            'last_run_timestamps' => [],
+            'last_error'          => null,
+            'recent_runs'         => [],
+        ];
+        if ( ! $exists ) {
+            return new WP_REST_Response( $empty );
+        }
+
+        $runs = $wpdb->get_results(
+            "SELECT id, op_key, status, created_at, started_at, finished_at, message, error
+             FROM {$table}
+             ORDER BY id DESC
+             LIMIT 20",
+            ARRAY_A
+        ) ?: [];
+
+        $sanitizedRuns = [];
+        foreach ( $runs as $row ) {
+            $sanitizedRuns[] = [
+                'id'         => (int) ( $row['id'] ?? 0 ),
+                'op_key'     => sanitize_text_field( (string) ( $row['op_key'] ?? '' ) ),
+                'status'     => sanitize_text_field( (string) ( $row['status'] ?? '' ) ),
+                'created_at' => $row['created_at'] ?? null,
+                'started_at' => $row['started_at'] ?? null,
+                'finished_at'=> $row['finished_at'] ?? null,
+                'message'    => $this->sanitize_run_message( $row['message'] ?? '' ),
+                'error'      => $this->sanitize_run_message( $row['error'] ?? '' ),
+            ];
+        }
+
+        $errorsTotal = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE status = 'error'" );
+        $errorsFiltered = (int) $wpdb->get_var(
+            "SELECT COUNT(*)
+             FROM {$table}
+             WHERE status = 'error'
+               AND op_key IN ('repricer_run','feed_enqueue','feed_run','rebuild','sweep_leases')
+               AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)"
+        );
+        $uniqueOpsImpacted = (int) $wpdb->get_var(
+            "SELECT COUNT(DISTINCT op_key)
+             FROM {$table}
+             WHERE status = 'error'
+               AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)"
+        );
+        $mostFrequentOpRow = $wpdb->get_row(
+            "SELECT op_key, COUNT(*) AS c
+             FROM {$table}
+             WHERE status = 'error'
+               AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)
+             GROUP BY op_key
+             ORDER BY c DESC
+             LIMIT 1",
+            ARRAY_A
+        );
+
+        $timestamps = [
+            'repricer_tick' => null,
+            'repricer_run' => null,
+            'feed_enqueue' => null,
+            'feed_run'     => null,
+            'rebuild'      => null,
+            'sweep_leases' => null,
+        ];
+        $lastTick = get_option( 'aurora_repricer_tick_last', [] );
+        if ( is_array( $lastTick ) ) {
+            $timestamps['repricer_tick'] = $lastTick['at'] ?? ( $lastTick['last_at'] ?? null );
+        }
+        $lastByOpRows = $wpdb->get_results(
+            "SELECT op_key, MAX(created_at) AS last_created_at
+             FROM {$table}
+             WHERE op_key IN ('repricer_run','feed_enqueue','feed_run','rebuild','sweep_leases')
+             GROUP BY op_key",
+            ARRAY_A
+        ) ?: [];
+        foreach ( $lastByOpRows as $row ) {
+            $opKey = (string) ( $row['op_key'] ?? '' );
+            if ( array_key_exists( $opKey, $timestamps ) ) {
+                $timestamps[ $opKey ] = $row['last_created_at'] ?: null;
+            }
+        }
+
+        $lastErrorRow = $wpdb->get_row(
+            "SELECT id, op_key, error, message, created_at
+             FROM {$table}
+             WHERE status = 'error'
+             ORDER BY id DESC
+             LIMIT 1",
+            ARRAY_A
+        );
+        $incidentsRows = $wpdb->get_results(
+            "SELECT id, op_key, status, error, message, created_at
+             FROM {$table}
+             WHERE status = 'error'
+             ORDER BY id DESC
+             LIMIT 20",
+            ARRAY_A
+        ) ?: [];
+
+        $incidents = [];
+        foreach ( $incidentsRows as $row ) {
+            $rawMessage = (string) ( $row['error'] ?: ( $row['message'] ?? '' ) );
+            $summary = $this->sanitize_run_message( $rawMessage );
+            $impact = 'Questa operazione potrebbe non completarsi correttamente.';
+            if ( str_contains( $rawMessage, 'Snapshot mismatch' ) ) {
+                $impact = 'Il feed può usare snapshot non allineati.';
+            } elseif ( str_contains( $rawMessage, 'No products selected' ) ) {
+                $impact = 'Il repricer non ha trovato prodotti eleggibili.';
+            } elseif ( str_contains( $rawMessage, 'rate limit' ) ) {
+                $impact = 'I trigger possono essere temporaneamente rifiutati.';
+            }
+            $incidents[] = [
+                'id'         => (int) ( $row['id'] ?? 0 ),
+                'severity'   => 'ERROR',
+                'op_key'     => sanitize_text_field( (string) ( $row['op_key'] ?? '' ) ),
+                'summary'    => $summary,
+                'impact'     => $impact,
+                'created_at' => $row['created_at'] ?? null,
+                'raw'        => $rawMessage,
+            ];
+        }
+
+        $as = [
+            'pending'  => 0,
+            'past_due' => 0,
+        ];
+        $asActionsTable  = $wpdb->prefix . 'actionscheduler_actions';
+        $asStatusesTable = $wpdb->prefix . 'actionscheduler_statuses';
+        $asActionsExists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $asActionsTable ) );
+        $asStatusesExists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $asStatusesTable ) );
+        if ( $asActionsExists && $asStatusesExists ) {
+            $as['pending'] = (int) $wpdb->get_var(
+                "SELECT COUNT(*)
+                 FROM {$asActionsTable} a
+                 INNER JOIN {$asStatusesTable} s ON a.status_id = s.status_id
+                 WHERE s.status = 'pending'"
+            );
+            $as['past_due'] = (int) $wpdb->get_var(
+                "SELECT COUNT(*)
+                 FROM {$asActionsTable} a
+                 INNER JOIN {$asStatusesTable} s ON a.status_id = s.status_id
+                 WHERE s.status = 'pending'
+                   AND a.scheduled_date_gmt <= UTC_TIMESTAMP()"
+            );
+        }
+
+        $healthStatus = 'OK';
+        $healthReasons = [];
+        if ( $queue['dead'] > 0 ) {
+            $healthStatus = 'FAIL';
+            $healthReasons[] = 'dead_queue=' . $queue['dead'];
+        } elseif ( $as['past_due'] > 20 ) {
+            $healthStatus = 'ERROR';
+            $healthReasons[] = 'actionscheduler_past_due=' . $as['past_due'];
+        } elseif ( $as['past_due'] > 0 ) {
+            $healthStatus = 'WARN';
+            $healthReasons[] = 'actionscheduler_past_due=' . $as['past_due'];
+        } elseif ( $errorsFiltered > 0 ) {
+            $healthStatus = 'WARN';
+            $healthReasons[] = 'recent_ops_errors=' . $errorsFiltered;
+        } elseif ( $errorsTotal > 0 ) {
+            $healthStatus = 'WARN';
+            $healthReasons[] = 'ops_errors_total=' . $errorsTotal;
+        }
+
+        $payload = [
+            'ok'                  => true,
+            'generated_at_utc'    => gmdate( 'Y-m-d H:i:s' ),
+            'health'              => [
+                'status'  => $healthStatus,
+                'reasons' => $healthReasons,
+            ],
+            'queue'               => $queue,
+            'ops_errors'          => [
+                'filtered' => $errorsFiltered,
+                'total'    => $errorsTotal,
+            ],
+            'incidents'           => [
+                'summary' => [
+                    'errors_24h'            => $errorsFiltered,
+                    'unique_ops_impacted'   => $uniqueOpsImpacted,
+                    'last_incident_at'      => $incidents[0]['created_at'] ?? null,
+                    'most_frequent_op'      => $mostFrequentOpRow ? (string) ( $mostFrequentOpRow['op_key'] ?? '' ) : null,
+                ],
+                'items' => $incidents,
+            ],
+            'action_scheduler'    => $as,
+            'config'              => [
+                'wp_cron_enabled' => ! ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ),
+            ],
+            'diagnostics'         => [
+                'recent_ops_errors'         => $errorsFiltered,
+                'snapshot_alignment_raw'    => ( $lastErrorRow && str_contains( (string) ( $lastErrorRow['error'] ?? '' ), 'Snapshot mismatch' ) )
+                    ? (string) ( $lastErrorRow['error'] ?? '' )
+                    : null,
+                'download_status_supported' => true,
+            ],
+            'last_run_timestamps' => $timestamps,
+            'last_error'          => $lastErrorRow ? [
+                'id'         => (int) ( $lastErrorRow['id'] ?? 0 ),
+                'op_key'     => sanitize_text_field( (string) ( $lastErrorRow['op_key'] ?? '' ) ),
+                'message'    => $this->sanitize_run_message( (string) ( $lastErrorRow['error'] ?: ( $lastErrorRow['message'] ?? '' ) ) ),
+                'created_at' => $lastErrorRow['created_at'] ?? null,
+            ] : null,
+            'recent_runs'         => $sanitizedRuns,
+        ];
+
+        return new WP_REST_Response( $payload );
     }
 
     public function repricer_run( WP_REST_Request $request ) {
@@ -855,6 +1154,14 @@ class Ops_Controller {
             }
         }
         return $default;
+    }
+
+    private function sanitize_run_message( string $message ) : string {
+        $clean = sanitize_text_field( wp_strip_all_tags( $message ) );
+        if ( function_exists( 'mb_substr' ) ) {
+            return mb_substr( $clean, 0, 180 );
+        }
+        return substr( $clean, 0, 180 );
     }
 
     private function sanitize_trigger_payload( string $opKey, array $payload ) : array {
