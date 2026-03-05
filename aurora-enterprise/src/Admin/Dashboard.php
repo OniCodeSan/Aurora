@@ -2,6 +2,8 @@
 namespace Aurora\Enterprise\Admin;
 
 class Dashboard {
+    private const DASHBOARD_SLUG = 'aurora-dashboard';
+
     public function hooks() : void {
         add_action( 'admin_menu', [ $this, 'register_menu' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
@@ -20,6 +22,15 @@ class Dashboard {
 
         add_submenu_page(
             'aurora-project',
+            __( 'Aurora Dashboard', 'aurora-enterprise' ),
+            __( 'Dashboard', 'aurora-enterprise' ),
+            'manage_options',
+            self::DASHBOARD_SLUG,
+            [ $this, 'render_page' ]
+        );
+
+        add_submenu_page(
+            'aurora-project',
             __( 'Aurora Feed Hub', 'aurora-enterprise' ),
             __( 'Feed Hub', 'aurora-enterprise' ),
             'manage_woocommerce',
@@ -29,17 +40,21 @@ class Dashboard {
     }
 
     public function render_page() : void {
-        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+        if ( ! current_user_can( 'manage_options' ) ) {
             return;
         }
-        echo '<div class="wrap aurora-enterprise-admin">';
-        echo '<h1>' . esc_html__( 'Aurora Enterprise - Feed Hub', 'aurora-enterprise' ) . '</h1>';
-        echo '<div id="aurora-enterprise-dashboard"></div>';
+        echo '<div class="wrap aurora-dashboard-admin">';
+        echo '<h1>' . esc_html__( 'Aurora Dashboard', 'aurora-enterprise' ) . '</h1>';
+        echo '<p class="description">' . esc_html__( 'Panoramica operativa Aurora: stato, run recenti ed eventi.', 'aurora-enterprise' ) . '</p>';
+        echo '<div id="aurora-dashboard-notices"></div>';
+        echo '<div id="aurora-dashboard-root">';
+        echo '<p class="aurora-dashboard-loading">' . esc_html__( 'Caricamento dashboard...', 'aurora-enterprise' ) . '</p>';
+        echo '</div>';
         echo '</div>';
     }
 
     public function enqueue_assets( string $hook ) : void {
-        if ( strpos( $hook, 'aurora-enterprise-indexer' ) === false ) {
+        if ( ! $this->is_dashboard_hook( $hook ) ) {
             return;
         }
         $ver = defined( 'AURORA_ENTERPRISE_VERSION' ) ? AURORA_ENTERPRISE_VERSION : '0.1.0';
@@ -50,12 +65,29 @@ class Dashboard {
 
         wp_enqueue_style( 'aurora-enterprise-admin', plugins_url( 'assets/admin/css/dashboard.css', AURORA_ENTERPRISE_PLUGIN_FILE ), [], $cssVer );
         wp_enqueue_script( 'aurora-enterprise-admin', plugins_url( 'assets/admin/js/dashboard.js', AURORA_ENTERPRISE_PLUGIN_FILE ), [ 'wp-element', 'wp-api-fetch' ], $jsVer, true );
-        wp_localize_script( 'aurora-enterprise-admin', 'auroraDashboard', [
-            'restBase'      => trailingslashit( rest_url( 'aurora/v1' ) ),
-            'dashboardPath' => '/aurora/v1/ops-ui-status',
-            'rebuildPath'   => '/aurora/v1/trigger/rebuild',
-            'nonce'         => wp_create_nonce( 'wp_rest' ),
-            'feedIntegrationsPath' => '/aurora/v1/feed/integrations',
+        wp_localize_script( 'aurora-enterprise-admin', 'auroraAdmin', [
+            'restBase' => trailingslashit( rest_url( 'aurora/v1' ) ),
+            'nonce'    => wp_create_nonce( 'wp_rest' ),
+            'urls'     => [
+                'systemStatus' => admin_url( 'admin.php?page=aurora-system-status' ),
+                'repricer'     => admin_url( 'admin.php?page=aurora-repricer' ),
+                'feed'         => admin_url( 'admin.php?page=aurora-enterprise-indexer' ),
+            ],
+            'routes'   => [
+                'summary' => 'dashboard/summary',
+                'runs'    => 'dashboard/runs',
+                'events'  => 'dashboard/events',
+                'action'  => 'dashboard/action',
+            ],
         ] );
+    }
+
+    private function is_dashboard_hook( string $hook ) : bool {
+        $allowed = [
+            'toplevel_page_aurora-project',
+            'aurora_page_' . self::DASHBOARD_SLUG,
+            'aurora_page_aurora-enterprise-indexer',
+        ];
+        return in_array( $hook, $allowed, true );
     }
 }

@@ -75,3 +75,29 @@ export WINDOW_MINUTES="5"
 ./tools/stress/run.sh ; echo "exit=$?"
 ```
 
+## Test Plan Dashboard
+
+### Smoke test REST dashboard
+
+```bash
+cd /Users/mariano/.openclaw/workspace/wordpress
+docker compose exec worker php /var/www/html/wp-content/plugins/aurora-enterprise/tools/smoke/aurora_dashboard_rest_smoke.php
+```
+
+Expected:
+- `GET /dashboard/summary` -> `PASS` with keys `status,reasons,kpis,alerts`
+- `GET /dashboard/runs` -> `PASS` with `runs[]`
+- `GET /dashboard/events` -> `PASS` with `events[]`
+- `POST /dashboard/action` second call -> `429` rate limit
+- final line `RESULT=PASS`
+
+### Edge-case checklist
+
+| Case | Verify |
+| --- | --- |
+| Nonce/session scaduta | UI mostra notice sessione scaduta e blocca contenuti |
+| Action Scheduler assente | KPI `past_due` mostrato come `—` + alert warning |
+| WooCommerce non attivo | Summary `status=error` + alert `woocommerce_inactive` |
+| Tabelle custom assenti | Nessun fatal SQL, fallback run/event attivo |
+| Rate limit action | 2 POST uguali entro 5s -> seconda `429` |
+| Transient invalidation | Dopo action valida, summary/runs ricalcolati |

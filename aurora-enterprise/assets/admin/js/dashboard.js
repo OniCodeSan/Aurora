@@ -1,318 +1,331 @@
 (function () {
-    const root = document.getElementById('aurora-enterprise-dashboard');
-    if (!root) {
+    const root = document.getElementById('aurora-dashboard-root');
+    const notices = document.getElementById('aurora-dashboard-notices');
+    if (!root || !notices) {
         return;
     }
 
-    const apiFetch = window.wp?.apiFetch;
-    if (!apiFetch) {
-        root.innerHTML = '<div class="notice notice-error"><p>wp-api-fetch non disponibile.</p></div>';
-        return;
-    }
-
-    const cfg = window.auroraDashboard || {};
-    const esc = (value) =>
-        String(value ?? '').replace(/[&<>"']/g, (char) => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;',
-        }[char]));
+    const cfg = window.auroraAdmin || {};
+    const base = String(cfg.restBase || '/wp-json/aurora/v1/').replace(/\/?$/, '/');
+    const routes = cfg.routes || {};
+    const pageUrls = cfg.urls || {};
+    const nonce = cfg.nonce || '';
 
     const state = {
-        loading: true,
-        error: '',
-        data: null,
-        feedIntegrations: null,
-        feedSaving: false,
-        rebuilding: false,
-        feedForm: {
-            amazon: {
-                seller_id: '',
-                marketplace_id: '',
-                client_id: '',
-                client_secret: '',
-                refresh_token: '',
-            },
-            ebay: {
-                merchant_id: '',
-                site_id: '',
-                app_id: '',
-                dev_id: '',
-                cert_id: '',
-                user_token: '',
-            },
-        },
+        summary: null,
+        runs: [],
+        events: [],
+        loading: false,
+        locked: false,
+        pendingAction: '',
+        cooldowns: {},
+        pollTimer: null,
     };
 
-    const headers = () => ({
-        'X-WP-Nonce': cfg.nonce || '',
-    });
+    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+    }[char]));
 
-    const fillFeedForm = (integrations) => {
-        const amazon = integrations?.amazon || {};
-        const ebay = integrations?.ebay || {};
-        state.feedForm = {
-            amazon: {
-                seller_id: String(amazon.seller_id || ''),
-                marketplace_id: String(amazon.marketplace_id || ''),
-                client_id: String(amazon.client_id || ''),
-                client_secret: '',
-                refresh_token: '',
-            },
-            ebay: {
-                merchant_id: String(ebay.merchant_id || ''),
-                site_id: String(ebay.site_id || ''),
-                app_id: String(ebay.app_id || ''),
-                dev_id: String(ebay.dev_id || ''),
-                cert_id: '',
-                user_token: '',
-            },
-        };
-    };
+    function setNotice(type, message) {
+        notices.innerHTML = '<div class="notice notice-' + type + '"><p>' + esc(message) + '</p></div>';
+    }
 
-    const fetchDashboard = () =>
-        apiFetch({
-            path: cfg.dashboardPath || '/aurora/v1/ops-ui-status',
-            headers: headers(),
-        }).then((response) => {
-            state.data = response || {};
-            state.error = '';
-            return response;
-        });
+    function clearNotice() {
+        notices.innerHTML = '';
+    }
 
-    const fetchFeedIntegrations = () =>
-        apiFetch({
-            path: cfg.feedIntegrationsPath || '/aurora/v1/feed/integrations',
-            headers: headers(),
-        }).then((response) => {
-            state.feedIntegrations = response?.integrations || null;
-            fillFeedForm(state.feedIntegrations);
-            return response;
-        });
-
-    const bindInput = (id, section, key) => {
-        const input = document.getElementById(id);
-        if (!input) {
-            return;
+    function routePath(route) {
+        const raw = String(route || '').trim();
+        if (!raw) {
+            return '/aurora/v1/dashboard/summary';
         }
-        input.addEventListener('input', (event) => {
-            state.feedForm[section][key] = String(event.target.value || '');
-        });
-    };
-
-    const saveIntegrations = () => {
-        if (state.feedSaving) {
-            return;
+        if (raw.indexOf('/aurora/v1/') === 0) {
+            return raw;
         }
-        state.feedSaving = true;
-        render();
+        return '/aurora/v1/' + raw.replace(/^\/+/, '');
+    }
 
-        apiFetch({
-            path: cfg.feedIntegrationsPath || '/aurora/v1/feed/integrations',
-            method: 'POST',
-            headers: headers(),
-            data: {
-                integrations: state.feedForm,
-            },
-        }).then((response) => {
-            state.feedIntegrations = response?.integrations || null;
-            fillFeedForm(state.feedIntegrations);
-            window.alert('Connessioni merchant salvate.');
-        }).catch((error) => {
-            window.alert(error?.message || 'Errore salvataggio connessioni merchant');
-        }).finally(() => {
-            state.feedSaving = false;
-            render();
-        });
-    };
+    async function request(method, route, body) {
+        const path = routePath(route);
+        const wpFetch = window.wp && window.wp.apiFetch;
 
-    const runRebuild = () => {
-        if (state.rebuilding) {
-            return;
-        }
-        state.rebuilding = true;
-        render();
-
-        apiFetch({
-            path: cfg.rebuildPath || '/aurora/v1/trigger/rebuild',
-            method: 'POST',
-            headers: headers(),
-            data: { indexer: 'all' },
-        }).then(() => {
-            window.alert('Rebuild avviato.');
-            return fetchDashboard();
-        }).catch((error) => {
-            window.alert(error?.message || 'Errore rebuild');
-        }).finally(() => {
-            state.rebuilding = false;
-            render();
-        });
-    };
-
-    const attachHandlers = () => {
-        const refreshButton = document.getElementById('aurora-refresh-dashboard');
-        if (refreshButton) {
-            refreshButton.addEventListener('click', () => {
-                state.loading = true;
-                render();
-                fetchDashboard().catch((error) => {
-                    state.error = error?.message || 'Errore caricamento status';
-                }).finally(() => {
-                    state.loading = false;
-                    render();
+        try {
+            if (wpFetch) {
+                return await wpFetch({
+                    path,
+                    method,
+                    data: body || undefined,
+                    headers: nonce ? { 'X-WP-Nonce': nonce } : {},
                 });
+            }
+
+            const response = await window.fetch(base + path.replace(/^\/aurora\/v1\//, ''), {
+                method,
+                credentials: 'same-origin',
+                headers: Object.assign(
+                    { 'Content-Type': 'application/json' },
+                    nonce ? { 'X-WP-Nonce': nonce } : {}
+                ),
+                body: body ? JSON.stringify(body) : undefined,
+            });
+
+            const payload = await response.json().catch(function () {
+                return {};
+            });
+
+            if (!response.ok) {
+                const error = new Error(payload.message || 'Request failed');
+                error.code = payload.code || 'request_failed';
+                error.status = response.status;
+                error.data = payload.data || {};
+                throw error;
+            }
+
+            return payload;
+        } catch (error) {
+            const err = error || new Error('Request failed');
+            const status = Number(err.status || err?.data?.status || 0);
+            err.status = status;
+            throw err;
+        }
+    }
+
+    function lockUi(message) {
+        state.locked = true;
+        root.classList.add('aurora-dashboard-locked');
+        setNotice('error', message || 'Sessione scaduta. Ricarica la pagina.');
+        stopPolling();
+        render();
+    }
+
+    function statusClass(status) {
+        if (status === 'ok') {
+            return 'is-ok';
+        }
+        if (status === 'warn') {
+            return 'is-warn';
+        }
+        return 'is-error';
+    }
+
+    function formatNumber(value) {
+        if (value === null || value === undefined || value === '') {
+            return '—';
+        }
+        const num = Number(value);
+        return Number.isFinite(num) ? String(num) : esc(value);
+    }
+
+    function actionButtons() {
+        const defs = [
+            { key: 'tick_scheduler', label: 'Repricer tick' },
+            { key: 'feed_enqueue', label: 'Feed enqueue' },
+            { key: 'feed_run', label: 'Feed run' },
+            { key: 'rebuild', label: 'Rebuild' },
+            { key: 'sweep_leases', label: 'Sweep leases' },
+        ];
+
+        return defs.map(function (def) {
+            const pending = state.pendingAction === def.key;
+            const cooldown = Number(state.cooldowns[def.key] || 0);
+            const disabled = state.locked || pending || cooldown > 0;
+            const label = cooldown > 0 ? (def.label + ' (' + cooldown + 's)') : def.label;
+            return '<button type="button" class="button button-secondary aurora-dashboard-action" data-action="' + def.key + '" ' + (disabled ? 'disabled' : '') + '>' + esc(label) + (pending ? '…' : '') + '</button>';
+        }).join('');
+    }
+
+    function render() {
+        const summary = state.summary || {};
+        const kpis = summary.kpis || {};
+        const alerts = Array.isArray(summary.alerts) ? summary.alerts : [];
+        const runs = Array.isArray(state.runs) ? state.runs : [];
+        const events = Array.isArray(state.events) ? state.events : [];
+
+        const alertsHtml = alerts.length
+            ? alerts.map(function (alert) {
+                const sev = esc(alert.severity || 'info');
+                return '<li class="aurora-alert aurora-alert-' + sev + '"><strong>' + esc(alert.code || 'alert') + '</strong> — ' + esc(alert.message || '') + '</li>';
+            }).join('')
+            : '<li class="aurora-empty">Nessun alert attivo.</li>';
+
+        const runsRows = runs.length
+            ? runs.map(function (run) {
+                return '<tr>' +
+                    '<td>' + esc(run.id || run.run_id || '—') + '</td>' +
+                    '<td>' + esc(run.op_key || '—') + '</td>' +
+                    '<td><span class="aurora-run-status status-' + esc(run.status || 'unknown') + '">' + esc(run.status || 'unknown') + '</span></td>' +
+                    '<td>' + esc(run.created_at || '—') + '</td>' +
+                    '<td>' + esc(run.finished_at || run.started_at || '—') + '</td>' +
+                    '<td>' + esc(run.message || run.error || '—') + '</td>' +
+                    '</tr>';
+            }).join('')
+            : '<tr><td colspan="6" class="aurora-empty">Nessun run disponibile.</td></tr>';
+
+        const eventsRows = events.length
+            ? events.map(function (event) {
+                return '<tr>' +
+                    '<td>' + esc(event.created_at || '—') + '</td>' +
+                    '<td>' + esc(event.level || 'info') + '</td>' +
+                    '<td>' + esc(event.event_key || 'event') + '</td>' +
+                    '<td>' + esc(event.message || '—') + '</td>' +
+                    '</tr>';
+            }).join('')
+            : '<tr><td colspan="4" class="aurora-empty">Nessun evento disponibile.</td></tr>';
+
+        const lockedHtml = state.locked
+            ? '<div class="aurora-lock-overlay"><div class="aurora-lock-card"><h3>Sessione scaduta</h3><p>Riapri il login per continuare.</p><a class="button button-primary" href="' + esc(window.location.href) + '">Ricarica pagina</a></div></div>'
+            : '';
+
+        root.innerHTML =
+            '<div class="aurora-dashboard-shell">' +
+                '<div class="aurora-dashboard-header">' +
+                    '<div class="aurora-health-badge ' + statusClass(String(summary.status || 'error')) + '">Health: ' + esc(summary.status || 'unknown') + '</div>' +
+                    '<div class="aurora-dashboard-header-actions">' +
+                        '<a class="button" href="' + esc(pageUrls.systemStatus || '#') + '">System Status</a>' +
+                        '<a class="button" href="' + esc(pageUrls.repricer || '#') + '">Repricer</a>' +
+                        '<a class="button" href="' + esc(pageUrls.feed || '#') + '">Feed Hub</a>' +
+                        '<button type="button" class="button" id="aurora-dashboard-refresh" ' + (state.loading || state.locked ? 'disabled' : '') + '>Refresh now</button>' +
+                    '</div>' +
+                '</div>' +
+
+                '<div class="aurora-kpi-grid">' +
+                    '<div class="aurora-kpi-card"><span class="label">Last tick</span><strong>' + esc(kpis.last_tick || '—') + '</strong></div>' +
+                    '<div class="aurora-kpi-card"><span class="label">Enqueued</span><strong>' + formatNumber(kpis.enqueued) + '</strong></div>' +
+                    '<div class="aurora-kpi-card"><span class="label">Past due</span><strong>' + formatNumber(kpis.past_due) + '</strong></div>' +
+                    '<div class="aurora-kpi-card"><span class="label">Ops errors 24h</span><strong>' + formatNumber(kpis.ops_errors_24h) + '</strong></div>' +
+                    '<div class="aurora-kpi-card"><span class="label">Last feed run</span><strong>' + esc(kpis.last_feed_run || '—') + '</strong></div>' +
+                    '<div class="aurora-kpi-card"><span class="label">Last repricer run</span><strong>' + esc(kpis.last_repricer_run || '—') + '</strong></div>' +
+                '</div>' +
+
+                '<div class="aurora-card">' +
+                    '<h2>Actions</h2>' +
+                    '<p class="description">Trigger operazioni sicure con rate-limit server-side (5s).</p>' +
+                    '<div class="aurora-action-list">' + actionButtons() + '</div>' +
+                '</div>' +
+
+                '<div class="aurora-grid-two">' +
+                    '<div class="aurora-card"><h2>Alerts</h2><ul class="aurora-alerts-list">' + alertsHtml + '</ul></div>' +
+                    '<div class="aurora-card"><h2>Events</h2><table class="widefat striped"><thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Message</th></tr></thead><tbody>' + eventsRows + '</tbody></table></div>' +
+                '</div>' +
+
+                '<div class="aurora-card">' +
+                    '<h2>Recent runs</h2>' +
+                    '<table class="widefat striped"><thead><tr><th>ID</th><th>Op</th><th>Status</th><th>Created</th><th>Finished</th><th>Message</th></tr></thead><tbody>' + runsRows + '</tbody></table>' +
+                '</div>' +
+                lockedHtml +
+            '</div>';
+
+        bindActions();
+    }
+
+    function bindActions() {
+        const refreshBtn = document.getElementById('aurora-dashboard-refresh');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function () {
+                loadAll(true);
             });
         }
 
-        const rebuildButton = document.getElementById('aurora-run-rebuild');
-        if (rebuildButton) {
-            rebuildButton.addEventListener('click', runRebuild);
+        root.querySelectorAll('.aurora-dashboard-action').forEach(function (button) {
+            button.addEventListener('click', function () {
+                const action = String(button.getAttribute('data-action') || '');
+                if (action) {
+                    triggerAction(action);
+                }
+            });
+        });
+    }
+
+    function startCooldown(action, seconds) {
+        const safe = Math.max(1, Number(seconds || 1));
+        state.cooldowns[action] = safe;
+        const timer = window.setInterval(function () {
+            const current = Number(state.cooldowns[action] || 0);
+            if (current <= 1) {
+                delete state.cooldowns[action];
+                window.clearInterval(timer);
+            } else {
+                state.cooldowns[action] = current - 1;
+            }
+            render();
+        }, 1000);
+    }
+
+    async function triggerAction(action) {
+        if (state.locked || state.pendingAction) {
+            return;
         }
-
-        bindInput('aurora-amz-seller-id', 'amazon', 'seller_id');
-        bindInput('aurora-amz-marketplace-id', 'amazon', 'marketplace_id');
-        bindInput('aurora-amz-client-id', 'amazon', 'client_id');
-        bindInput('aurora-amz-client-secret', 'amazon', 'client_secret');
-        bindInput('aurora-amz-refresh-token', 'amazon', 'refresh_token');
-        bindInput('aurora-ebay-merchant-id', 'ebay', 'merchant_id');
-        bindInput('aurora-ebay-site-id', 'ebay', 'site_id');
-        bindInput('aurora-ebay-app-id', 'ebay', 'app_id');
-        bindInput('aurora-ebay-dev-id', 'ebay', 'dev_id');
-        bindInput('aurora-ebay-cert-id', 'ebay', 'cert_id');
-        bindInput('aurora-ebay-user-token', 'ebay', 'user_token');
-
-        const saveButton = document.getElementById('aurora-save-feed-integrations');
-        if (saveButton) {
-            saveButton.addEventListener('click', saveIntegrations);
-        }
-    };
-
-    const render = () => {
-        const data = state.data || {};
-        const queue = data.queue || {};
-        const errors = data.ops_errors || {};
-        const incidents = data.incidents || {};
-        const summary = incidents.summary || {};
-        const lastError = data.last_error || {};
-        const timestamps = data.last_run_timestamps || {};
-        const runs = Array.isArray(data.recent_runs) ? data.recent_runs : [];
-
-        const feed = state.feedIntegrations || {};
-        const amazon = feed.amazon || {};
-        const ebay = feed.ebay || {};
-
-        const loadingHtml = state.loading ? '<div class="aurora-muted">Caricamento...</div>' : '';
-        const errorHtml = state.error
-            ? `<div class="notice notice-error inline"><p>${esc(state.error)}</p></div>`
-            : '';
-
-        root.innerHTML = `
-            ${errorHtml}
-            <div class="aurora-dashboard-toolbar">
-                <button class="button" id="aurora-refresh-dashboard">Refresh now</button>
-                ${loadingHtml}
-            </div>
-            <div class="aurora-dashboard-grid">
-                <div class="aurora-card">
-                    <h2>System health</h2>
-                    <p><strong>Status:</strong> ${esc(data.health?.status || 'WARN')}</p>
-                    <p><strong>Queue backlog:</strong> ${Number(queue.backlog_total || 0)}</p>
-                    <p><strong>Dead queue:</strong> ${Number(queue.dead || 0)}</p>
-                </div>
-                <div class="aurora-card">
-                    <h2>Incidents</h2>
-                    <p><strong>Errori (24h):</strong> ${Number(summary.errors_24h || errors.filtered || 0)}</p>
-                    <p><strong>Op impattate:</strong> ${Number(summary.unique_ops_impacted || 0)}</p>
-                    <p><strong>Ultimo incidente:</strong> ${esc(summary.last_incident_at || '-')}</p>
-                </div>
-                <div class="aurora-card">
-                    <h2>Ultimo errore</h2>
-                    <p><strong>Op:</strong> ${esc(lastError.op_key || '-')}</p>
-                    <p><strong>At:</strong> ${esc(lastError.created_at || '-')}</p>
-                    <p class="aurora-meta-note">${esc(lastError.message || 'Nessun errore recente.')}</p>
-                </div>
-                <div class="aurora-card">
-                    <h2>Azioni</h2>
-                    <button class="button button-primary" id="aurora-run-rebuild" ${state.rebuilding ? 'disabled' : ''}>
-                        ${state.rebuilding ? 'Avvio rebuild...' : 'Avvia rebuild'}
-                    </button>
-                    <p class="aurora-meta-note">Feed enqueue: ${esc(timestamps.feed_enqueue || '-')}</p>
-                    <p class="aurora-meta-note">Feed run: ${esc(timestamps.feed_run || '-')}</p>
-                </div>
-            </div>
-
-            <div class="aurora-card aurora-card--wide">
-                <h2>Connessioni feed marketplace</h2>
-                <p class="aurora-meta-note">Configura API merchant per Amazon ed eBay. I segreti salvati vengono mostrati solo mascherati.</p>
-                <div class="aurora-marketplace-grid">
-                    <div class="aurora-marketplace-col">
-                        <h3>Amazon</h3>
-                        <label>Seller ID <input type="text" id="aurora-amz-seller-id" value="${esc(state.feedForm.amazon.seller_id)}" /></label>
-                        <label>Marketplace ID <input type="text" id="aurora-amz-marketplace-id" value="${esc(state.feedForm.amazon.marketplace_id)}" /></label>
-                        <label>Client ID <input type="text" id="aurora-amz-client-id" value="${esc(state.feedForm.amazon.client_id)}" /></label>
-                        <label>Client secret <input type="password" id="aurora-amz-client-secret" value="" placeholder="${amazon.has_client_secret ? 'gia configurato' : 'inserisci secret'}" /></label>
-                        <label>Refresh token <input type="password" id="aurora-amz-refresh-token" value="" placeholder="${amazon.has_refresh_token ? 'gia configurato' : 'inserisci token'}" /></label>
-                        <p class="aurora-meta-note">Secret: ${esc(amazon.client_secret || '-')} | Token: ${esc(amazon.refresh_token || '-')}</p>
-                    </div>
-                    <div class="aurora-marketplace-col">
-                        <h3>eBay</h3>
-                        <label>Merchant ID <input type="text" id="aurora-ebay-merchant-id" value="${esc(state.feedForm.ebay.merchant_id)}" /></label>
-                        <label>Site ID <input type="text" id="aurora-ebay-site-id" value="${esc(state.feedForm.ebay.site_id)}" /></label>
-                        <label>App ID <input type="text" id="aurora-ebay-app-id" value="${esc(state.feedForm.ebay.app_id)}" /></label>
-                        <label>Dev ID <input type="text" id="aurora-ebay-dev-id" value="${esc(state.feedForm.ebay.dev_id)}" /></label>
-                        <label>Cert ID <input type="password" id="aurora-ebay-cert-id" value="" placeholder="${ebay.has_cert_id ? 'gia configurato' : 'inserisci cert'}" /></label>
-                        <label>User token <input type="password" id="aurora-ebay-user-token" value="" placeholder="${ebay.has_user_token ? 'gia configurato' : 'inserisci token'}" /></label>
-                        <p class="aurora-meta-note">Cert: ${esc(ebay.cert_id || '-')} | Token: ${esc(ebay.user_token || '-')}</p>
-                    </div>
-                </div>
-                <div class="aurora-actions">
-                    <button class="button button-primary" id="aurora-save-feed-integrations" ${state.feedSaving ? 'disabled' : ''}>
-                        ${state.feedSaving ? 'Salvataggio...' : 'Salva connessioni API feed'}
-                    </button>
-                    <span class="aurora-meta-note">Ultimo aggiornamento: ${esc(feed.updated_at || '-')}</span>
-                </div>
-            </div>
-
-            <div class="aurora-card aurora-card--wide">
-                <h2>Run recenti</h2>
-                <table class="widefat striped">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Op</th>
-                            <th>Status</th>
-                            <th>Creato</th>
-                            <th>Messaggio</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${runs.length ? runs.slice(0, 10).map((run) => `
-                            <tr>
-                                <td>${Number(run.id || 0)}</td>
-                                <td>${esc(run.op_key || '-')}</td>
-                                <td>${esc(run.status || '-')}</td>
-                                <td>${esc(run.created_at || '-')}</td>
-                                <td>${esc(run.message || run.error || '-')}</td>
-                            </tr>
-                        `).join('') : '<tr><td colspan="5">Nessun run recente.</td></tr>'}
-                    </tbody>
-                </table>
-            </div>
-        `;
-
-        attachHandlers();
-    };
-
-    render();
-
-    Promise.allSettled([fetchDashboard(), fetchFeedIntegrations()]).then((results) => {
-        const dashboardFail = results[0]?.status === 'rejected';
-        if (dashboardFail) {
-            state.error = results[0].reason?.message || 'Errore caricamento status';
-        }
-        state.loading = false;
+        state.pendingAction = action;
+        clearNotice();
         render();
-    });
+        try {
+            const response = await request('POST', routes.action || 'dashboard/action', { action: action });
+            setNotice('success', response.message || 'Azione completata.');
+            await loadAll(false);
+        } catch (error) {
+            if (error.status === 401 || error.status === 403) {
+                lockUi('Sessione scaduta o permessi insufficienti.');
+                return;
+            }
+            if (error.status === 429) {
+                const retry = Number(error?.data?.retry_after || 5);
+                startCooldown(action, retry);
+                setNotice('warning', 'Rate limit attivo. Riprova tra ' + retry + ' secondi.');
+            } else {
+                setNotice('error', error.message || 'Errore eseguendo azione dashboard.');
+            }
+        } finally {
+            state.pendingAction = '';
+            render();
+        }
+    }
+
+    async function loadAll(withSpinner) {
+        if (state.locked) {
+            return;
+        }
+        state.loading = Boolean(withSpinner);
+        render();
+        try {
+            const [summaryResp, runsResp, eventsResp] = await Promise.all([
+                request('GET', routes.summary || 'dashboard/summary'),
+                request('GET', (routes.runs || 'dashboard/runs') + '?limit=20'),
+                request('GET', (routes.events || 'dashboard/events') + '?limit=10'),
+            ]);
+            state.summary = summaryResp && summaryResp.summary ? summaryResp.summary : summaryResp;
+            state.runs = Array.isArray(runsResp.runs) ? runsResp.runs : [];
+            state.events = Array.isArray(eventsResp.events) ? eventsResp.events : [];
+            clearNotice();
+        } catch (error) {
+            if (error.status === 401 || error.status === 403) {
+                lockUi('Sessione scaduta o permessi insufficienti.');
+                return;
+            }
+            setNotice('error', error.message || 'Errore caricando dashboard.');
+        } finally {
+            state.loading = false;
+            render();
+        }
+    }
+
+    function startPolling() {
+        stopPolling();
+        state.pollTimer = window.setInterval(function () {
+            loadAll(false);
+        }, 15000);
+    }
+
+    function stopPolling() {
+        if (state.pollTimer) {
+            window.clearInterval(state.pollTimer);
+            state.pollTimer = null;
+        }
+    }
+
+    loadAll(true);
+    startPolling();
 })();
