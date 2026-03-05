@@ -38,6 +38,20 @@ spl_autoload_register( static function ( string $class ) : void {
 
 register_activation_hook( __FILE__, static function () {
     ( new Aurora\Enterprise\Database\Installer() )->install();
+    add_option( 'aurora_snapshot_v2_enabled', 1, '', 'no' );
+    add_option( 'aurora_idempotence_ttl', 900, '', 'no' );
+    add_option( 'aurora_queue_lease_ttl', 60, '', 'no' );
+    add_option( 'aurora_total_shards', 2, '', 'no' );
+    add_option( 'aurora_lease_sweep_cron_enabled', 1, '', 'no' );
+} );
+
+register_deactivation_hook( __FILE__, static function () {
+    if ( function_exists( 'wp_clear_scheduled_hook' ) ) {
+        wp_clear_scheduled_hook( 'aurora_queue_sweeper_run' );
+    }
+    if ( function_exists( 'as_unschedule_all_actions' ) ) {
+        as_unschedule_all_actions( 'aurora_repricer_tick', [], 'aurora' );
+    }
 } );
 
 add_action( 'plugins_loaded', static function () {
