@@ -1,0 +1,161 @@
+[
+  {
+    "name": "maintain_margin_no_change",
+    "input": { "old_price": 20, "cost": 10, "override": "0" },
+    "config": { "strategy": "maintain_margin", "min_margin_percent": 10, "min_margin_abs": 1, "margin_mode": "clamp", "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "no_change",
+      "reason_code": "no_change",
+      "old_price": 20.0,
+      "candidate_price": 20.0,
+      "clamped_price": 20.0,
+      "rounded_price": 20.0,
+      "new_price": 20.0,
+      "delta_pct": 0.0,
+      "margin_before": 0.5,
+      "margin_after": 0.5
+    }
+  },
+  {
+    "name": "floor_margin_clamp",
+    "input": { "old_price": 10, "cost": 9, "override": "0" },
+    "config": { "strategy": "maintain_margin", "min_margin_percent": 20, "min_margin_abs": 0, "margin_mode": "clamp", "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "floor_margin",
+      "reason_code": "floor_margin_clamp",
+      "candidate_price": 10.0,
+      "clamped_price": 10.8,
+      "rounded_price": 10.8,
+      "new_price": 10.8,
+      "delta_pct": 8.0,
+      "margin_before": 0.1,
+      "margin_after": 0.1667
+    }
+  },
+  {
+    "name": "floor_margin_block",
+    "input": { "old_price": 10, "cost": 9, "override": "0" },
+    "config": { "strategy": "maintain_margin", "min_margin_percent": 20, "min_margin_abs": 0, "margin_mode": "block", "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "floor_margin",
+      "reason_code": "floor_margin_block",
+      "candidate_price": 10.0,
+      "clamped_price": 10.0,
+      "rounded_price": 10.0,
+      "new_price": 10.0,
+      "delta_pct": 0.0
+    }
+  },
+  {
+    "name": "match_competitor_min_price_clamp",
+    "input": { "old_price": 20, "cost": 1, "competitor_price": 8, "override": "0" },
+    "config": { "strategy": "match_competitor", "min_margin_percent": 0, "min_margin_abs": 0, "min_price": 12, "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "match_competitor",
+      "reason_code": "min_price_clamp",
+      "candidate_price": 8.0,
+      "clamped_price": 12.0,
+      "rounded_price": 12.0,
+      "new_price": 12.0,
+      "delta_pct": -40.0
+    }
+  },
+  {
+    "name": "beat_competitor_delta_abs",
+    "input": { "old_price": 20, "cost": 10, "competitor_price": 18, "override": "0" },
+    "config": { "strategy": "beat_competitor", "beat_delta_abs": 1, "min_margin_percent": 0, "min_margin_abs": 0, "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "beat_competitor",
+      "reason_code": "strategy_beat_competitor",
+      "candidate_price": 17.0,
+      "clamped_price": 17.0,
+      "rounded_price": 17.0,
+      "new_price": 17.0,
+      "delta_pct": -15.0
+    }
+  },
+  {
+    "name": "max_raise_clamp",
+    "input": { "old_price": 20, "cost": 10, "competitor_price": 30, "override": "0" },
+    "config": { "strategy": "match_competitor", "min_margin_percent": 0, "min_margin_abs": 0, "max_raise_pct": 10, "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "match_competitor",
+      "reason_code": "max_raise_clamp",
+      "candidate_price": 30.0,
+      "clamped_price": 22.0,
+      "rounded_price": 22.0,
+      "new_price": 22.0,
+      "delta_pct": 10.0
+    }
+  },
+  {
+    "name": "max_drop_clamp",
+    "input": { "old_price": 20, "cost": 1, "competitor_price": 5, "override": "0" },
+    "config": { "strategy": "match_competitor", "min_margin_percent": 0, "min_margin_abs": 0, "max_drop_pct": 20, "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "match_competitor",
+      "reason_code": "max_drop_clamp",
+      "candidate_price": 5.0,
+      "clamped_price": 16.0,
+      "rounded_price": 16.0,
+      "new_price": 16.0,
+      "delta_pct": -20.0
+    }
+  },
+  {
+    "name": "rounding_99",
+    "input": { "old_price": 20.1, "cost": 10, "competitor_price": 20.41, "override": "0" },
+    "config": { "strategy": "match_competitor", "min_margin_percent": 0, "min_margin_abs": 0, "rounding_mode": ".99" },
+    "expected": {
+      "rule_applied": "match_competitor",
+      "reason_code": "rounded",
+      "candidate_price": 20.41,
+      "clamped_price": 20.41,
+      "rounded_price": 20.99,
+      "new_price": 20.99,
+      "delta_pct": 4.4279
+    }
+  },
+  {
+    "name": "rounding_step",
+    "input": { "old_price": 10, "cost": 5, "competitor_price": 10.03, "override": "0" },
+    "config": { "strategy": "match_competitor", "min_margin_percent": 0, "min_margin_abs": 0, "rounding_mode": "step", "rounding_step": 0.05 },
+    "expected": {
+      "rule_applied": "match_competitor",
+      "reason_code": "rounded",
+      "candidate_price": 10.03,
+      "clamped_price": 10.03,
+      "rounded_price": 10.05,
+      "new_price": 10.05,
+      "delta_pct": 0.5
+    }
+  },
+  {
+    "name": "map_price_clamp",
+    "input": { "old_price": 15, "cost": 1, "competitor_price": 12, "map_price": 12, "override": "0" },
+    "config": { "strategy": "beat_competitor", "beat_delta_abs": 0.5, "min_margin_percent": 0, "min_margin_abs": 0, "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "beat_competitor",
+      "reason_code": "map_price_clamp",
+      "candidate_price": 11.5,
+      "clamped_price": 12.0,
+      "rounded_price": 12.0,
+      "new_price": 12.0,
+      "delta_pct": -20.0
+    }
+  },
+  {
+    "name": "competitor_missing_no_change",
+    "input": { "old_price": 15, "cost": 5, "override": "0" },
+    "config": { "strategy": "match_competitor", "min_margin_percent": 0, "min_margin_abs": 0, "rounding_mode": "none" },
+    "expected": {
+      "rule_applied": "no_change",
+      "reason_code": "competitor_missing",
+      "candidate_price": 15.0,
+      "clamped_price": 15.0,
+      "rounded_price": 15.0,
+      "new_price": 15.0,
+      "delta_pct": 0.0
+    }
+  }
+]

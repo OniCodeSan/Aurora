@@ -1,0 +1,184 @@
+.aurora-dashboard-admin {
+    position: relative;
+}
+
+.aurora-dashboard-loading {
+    margin: 12px 0;
+    color: #50575e;
+}
+
+.aurora-dashboard-shell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.aurora-dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.aurora-dashboard-header-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.aurora-health-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    text-transform: uppercase;
+    font-size: 12px;
+}
+
+.aurora-health-badge.is-ok {
+    background: #edfaef;
+    border-color: #6bb77b;
+    color: #185a2b;
+}
+
+.aurora-health-badge.is-warn {
+    background: #fff8e5;
+    border-color: #dba617;
+    color: #8a5a00;
+}
+
+.aurora-health-badge.is-error {
+    background: #fdecec;
+    border-color: #d63638;
+    color: #7a1112;
+}
+
+.aurora-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.aurora-kpi-card,
+.aurora-card {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 8px;
+    padding: 14px;
+}
+
+.aurora-kpi-card .label {
+    display: block;
+    margin-bottom: 6px;
+    color: #50575e;
+    font-size: 12px;
+}
+
+.aurora-kpi-card strong {
+    font-size: 14px;
+}
+
+.aurora-grid-two {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 12px;
+}
+
+.aurora-action-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.aurora-alerts-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.aurora-alert {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-left: 4px solid #dcdcde;
+    background: #f6f7f7;
+}
+
+.aurora-alert:last-child {
+    margin-bottom: 0;
+}
+
+.aurora-alert-info {
+    border-left-color: #8c8f94;
+}
+
+.aurora-alert-warn {
+    border-left-color: #dba617;
+    background: #fff8e5;
+}
+
+.aurora-alert-error {
+    border-left-color: #d63638;
+    background: #fdecec;
+}
+
+.aurora-run-status {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.aurora-run-status.status-success {
+    background: #edfaef;
+    color: #185a2b;
+}
+
+.aurora-run-status.status-error {
+    background: #fdecec;
+    color: #7a1112;
+}
+
+.aurora-run-status.status-running,
+.aurora-run-status.status-requested,
+.aurora-run-status.status-pending {
+    background: #eef4ff;
+    color: #154a9a;
+}
+
+.aurora-empty {
+    color: #646970;
+}
+
+.aurora-dashboard-locked {
+    opacity: 0.72;
+}
+
+.aurora-lock-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+}
+
+.aurora-lock-card {
+    max-width: 360px;
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+
+@media (max-width: 900px) {
+    .aurora-dashboard-header-actions {
+        width: 100%;
+    }
+}

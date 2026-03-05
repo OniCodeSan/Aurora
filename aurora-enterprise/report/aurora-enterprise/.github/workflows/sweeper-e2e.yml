@@ -1,0 +1,81 @@
+name: Sweeper E2E
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'aurora-enterprise/**'
+      - 'wordpress/**'
+      - '.github/workflows/sweeper-e2e.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      COMPOSE_PROJECT_NAME: aurora
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Launch dev stack
+        working-directory: wordpress
+        run: docker compose up -d
+
+      - name: Wait for MySQL
+        working-directory: wordpress
+        run: |
+          for i in {1..30}; do
+            docker compose exec db mysqladmin ping -h "db" -u root -prootpassword && break
+            sleep 5
+          done
+
+      - name: Install WordPress
+        working-directory: wordpress
+        run: |
+          docker compose run --rm --entrypoint wp worker core install \
+            --url=http://aurora-ci.test \
+            --title="Aurora CI" \
+            --admin_user=admin \
+            --admin_password=admin \
+            --admin_email=ci@example.com || true
+
+      - name: Activate Aurora plugin
+        working-directory: wordpress
+        run: docker compose run --rm --entrypoint wp worker plugin activate aurora-enterprise
+
+      - name: Force DB driver constant
+        working-directory: wordpress
+        run: |
+          docker compose cp wordpress:/var/www/html/wp-config.php /tmp/wp-config.php
+          cat <<'PHP' >/tmp/inject-aurora-constant.php
+          <?php
+          $path = '/tmp/wp-config.php';
+          $marker = "/* That's all, stop editing! Happy publishing. */";
+          $contents = file_get_contents($path);
+          if (strpos($contents, 'AURORA_QUEUE_DRIVER') === false) {
+              $contents = str_replace($marker, "define('AURORA_QUEUE_DRIVER', 'database');\n\n" . $marker, $contents);
+              file_put_contents($path, $contents);
+          }
+          PHP
+          php /tmp/inject-aurora-constant.php
+          docker compose cp /tmp/wp-config.php wordpress:/var/www/html/wp-config.php
+          docker compose exec wordpress chown www-data:www-data /var/www/html/wp-config.php
+
+      - name: Install WooCommerce (8.4.0)
+        working-directory: wordpress
+        run: |
+          curl -L -o /tmp/woocommerce.zip https://downloads.wordpress.org/plugin/woocommerce.8.4.0.zip
+          docker compose cp /tmp/woocommerce.zip wordpress:/tmp/woocommerce.zip
+          docker compose exec wordpress bash -lc "apt-get update >/dev/null && apt-get install -y unzip >/dev/null"
+          docker compose exec wordpress bash -lc "cd /var/www/html/wp-content/plugins && unzip -o /tmp/woocommerce.zip >/dev/null && chown -R www-data:www-data woocommerce && rm /tmp/woocommerce.zip"
+          docker compose run --rm --entrypoint wp worker plugin activate woocommerce || true
+
+      - name: Run sweeper verification script
+        working-directory: wordpress
+        run: docker compose run --rm --entrypoint bash worker -lc 'cd wp-content/plugins/aurora-enterprise && ./bin/verify-sweeper.sh'
+
+      - name: Teardown
+        if: always()
+        working-directory: wordpress
+        run: docker compose down -v

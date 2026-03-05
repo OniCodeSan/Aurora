@@ -1,0 +1,109 @@
+#aurora-system-status-root,
+#aurora-ops-root {
+  margin-top: 12px;
+}
+
+.aurora-admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.aurora-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.aurora-card {
+  background: #fff;
+  border: 1px solid #dcdcde;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.aurora-card h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.aurora-muted {
+  color: #646970;
+  font-size: 12px;
+}
+
+.aurora-metric {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.aurora-pill {
+  display: inline-block;
+  border: 1px solid #ccd0d4;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.aurora-pill.is-ok {
+  background: #edfaef;
+  border-color: #8ecf9e;
+}
+
+.aurora-pill.is-warn {
+  background: #fff8e5;
+  border-color: #e6c15b;
+}
+
+.aurora-pill.is-fail {
+  background: #fde8e8;
+  border-color: #e79a9a;
+}
+
+.aurora-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.aurora-card label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.aurora-card input[type="number"],
+.aurora-card select,
+.aurora-card input[type="text"],
+.aurora-card input[type="password"] {
+  width: 100%;
+  max-width: 360px;
+}
+
+.aurora-card--wide {
+  margin-bottom: 12px;
+}
+
+.aurora-marketplace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.aurora-marketplace-col h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+@media (max-width: 960px) {
+  .aurora-marketplace-grid {
+    grid-template-columns: 1fr;
+  }
+}
