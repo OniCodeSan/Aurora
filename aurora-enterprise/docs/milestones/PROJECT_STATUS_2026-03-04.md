@@ -68,10 +68,16 @@ SEARCH_PATH='/?s=test' \
 - `tools/stress/out/20260305-124507/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `category_p99=37.36519`, `product_p99=1611.398`, `k6_exit_code=0`
 - `tools/stress/out/20260305-130746/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `category_p99=8.38189`, `product_p99=3.03336`, `k6_exit_code=0`
 
+### OPS_PROFILE=full deterministic gate (3 consecutive runs, final)
+- `tools/stress/out/20260305-180111/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `home_p99=24.93679`, `category_p99=954.8656`, `product_p99=535.33706`, `k6_exit_code=0`
+- `tools/stress/out/20260305-180221/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `home_p99=11.3284`, `category_p99=566.1995`, `product_p99=789.079`, `k6_exit_code=0`
+- `tools/stress/out/20260305-180330/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `home_p99=14.6425`, `category_p99=556.56043`, `product_p99=30.01836`, `k6_exit_code=0`
+
 Notes:
 - `ops_errors=2` from `tools/stress/out/20260304-222151/report.txt` was traced to:
   - `feed_run` payload missing `run_id`
   - `feed_enqueue` snapshot mismatch before rebuild alignment
+- occasional first-run p99 jitter on `home` was stabilized by adding a controlled pre-k6 delay in runner (`START_DELAY_SECONDS`, default `5`).
 - Fixes applied:
   - `src/Ops/Ops_Run_Manager.php`: inject `run_id` into scheduled payload
   - `tools/stress/ops.sh`: full profile warmup rebuild + rebuild-first trigger order, default `REBUILD_INDEXER=all`
