@@ -227,7 +227,13 @@ class FeedRunManager {
             $now, $now, $runId
         ));
         if ((int)$updated !== 1 && ($progress['status'] ?? '') !== 'running') {
-            throw new Exception('Unable to transition run to running');
+            // Dispatcher may have already set the run status to running.
+            $currentStatus = (string) $wpdb->get_var(
+                $wpdb->prepare("SELECT status FROM {$table} WHERE id = %d", $runId)
+            );
+            if ('running' !== $currentStatus) {
+                throw new Exception('Unable to transition run to running');
+            }
         }
         $this->persistProgress($runId, [
             'status' => 'running',
