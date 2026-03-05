@@ -13,6 +13,8 @@ RATE="${RATE:-10}"
 VUS="${VUS:-20}"
 MAX_VUS="${MAX_VUS:-50}"
 MAX_ERROR_SAMPLES="${MAX_ERROR_SAMPLES:-20}"
+WARMUP_HITS="${WARMUP_HITS:-5}"
+START_DELAY_SECONDS="${START_DELAY_SECONDS:-5}"
 OPS_PROFILE="${OPS_PROFILE:-repricer}"
 
 HOME_PATH="${HOME_PATH:-/}"
@@ -64,7 +66,20 @@ else
   OPS_PID=$!
 fi
 
-sleep 1
+if [[ "$START_DELAY_SECONDS" =~ ^[0-9]+$ ]] && [ "$START_DELAY_SECONDS" -gt 0 ]; then
+  echo "[orchestrator] start delay=${START_DELAY_SECONDS}s" | tee -a "$OUT_DIR/run.log"
+  sleep "$START_DELAY_SECONDS"
+fi
+
+if command -v curl >/dev/null 2>&1 && [[ "$WARMUP_HITS" =~ ^[0-9]+$ ]] && [ "$WARMUP_HITS" -gt 0 ]; then
+  echo "[orchestrator] warmup hits=$WARMUP_HITS" | tee -a "$OUT_DIR/run.log"
+  for ((i=1; i<=WARMUP_HITS; i++)); do
+    curl -fsS -o /dev/null "$BASE_URL$HOME_PATH" || true
+    curl -fsS -o /dev/null "$BASE_URL$CATEGORY_PATH" || true
+    curl -fsS -o /dev/null "$BASE_URL$PRODUCT_PATH" || true
+    curl -fsS -o /dev/null "$BASE_URL$SEARCH_PATH" || true
+  done
+fi
 
 echo "[orchestrator] start k6 load" | tee -a "$OUT_DIR/run.log"
 set +e

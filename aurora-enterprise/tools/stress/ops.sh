@@ -8,6 +8,7 @@ PLUGIN_PATH_IN_CONTAINER="${PLUGIN_PATH_IN_CONTAINER:-/var/www/html/wp-content/p
 DURATION_SECONDS="${OPS_DURATION_SECONDS:-120}"
 TRIGGER_INTERVAL_SECONDS="${OPS_TRIGGER_INTERVAL_SECONDS:-15}"
 AS_INTERVAL_SECONDS="${OPS_AS_INTERVAL_SECONDS:-10}"
+AS_TIMEOUT_SECONDS="${OPS_AS_TIMEOUT_SECONDS:-25}"
 OPS_PROFILE="${OPS_PROFILE:-repricer}"
 
 FEED_CHUNK_SIZE="${FEED_CHUNK_SIZE:-1000}"
@@ -46,7 +47,7 @@ if [[ "$OPS_PROFILE" == "full" ]]; then
   echo "[warmup] rebuild indexer=${REBUILD_INDEXER}" >> "$LOG_FILE"
   rest_call "/aurora/v1/trigger/rebuild" "{\"indexer\":\"${REBUILD_INDEXER}\"}" >> "$LOG_FILE" || true
   echo "[warmup] action-scheduler run" >> "$LOG_FILE"
-  compose_exec wp action-scheduler run --hooks=aurora_ops_dispatch --batches=2 --batch-size=100 >> "$LOG_FILE" 2>&1 || true
+  timeout "${AS_TIMEOUT_SECONDS}s" bash -lc "cd \"$WP_DIR\" && docker compose exec worker wp action-scheduler run --hooks=aurora_ops_dispatch --batches=2 --batch-size=100" >> "$LOG_FILE" 2>&1 || true
 fi
 
 trigger_loop() {
@@ -86,7 +87,7 @@ scheduler_loop() {
   local end_ts=$(( $(date +%s) + DURATION_SECONDS ))
   while [ $(date +%s) -lt $end_ts ]; do
     echo "[action-scheduler] run" >> "$LOG_FILE"
-    compose_exec wp action-scheduler run --hooks=aurora_ops_dispatch --batches=1 --batch-size=100 >> "$LOG_FILE" 2>&1 || true
+    timeout "${AS_TIMEOUT_SECONDS}s" bash -lc "cd \"$WP_DIR\" && docker compose exec worker wp action-scheduler run --hooks=aurora_ops_dispatch --batches=1 --batch-size=100" >> "$LOG_FILE" 2>&1 || true
     sleep "$AS_INTERVAL_SECONDS"
   done
 }
