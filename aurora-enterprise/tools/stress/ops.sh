@@ -14,7 +14,7 @@ FEED_CHUNK_SIZE="${FEED_CHUNK_SIZE:-1000}"
 FEED_BATCH="${FEED_BATCH:-100}"
 FEED_MAX_LOOPS="${FEED_MAX_LOOPS:-1}"
 SWEEP_CHANNEL="${SWEEP_CHANNEL:-all}"
-REBUILD_INDEXER="${REBUILD_INDEXER:-price}"
+REBUILD_INDEXER="${REBUILD_INDEXER:-all}"
 
 LOG_FILE="${LOG_FILE:-$ROOT_DIR/out/ops.log}"
 ONLY_ASSIGNMENT_ID="${ONLY_ASSIGNMENT_ID:-0}"
@@ -42,10 +42,20 @@ if [[ "$OPS_PROFILE" == "repricer" ]]; then
   fi
 fi
 
+if [[ "$OPS_PROFILE" == "full" ]]; then
+  echo "[warmup] rebuild indexer=${REBUILD_INDEXER}" >> "$LOG_FILE"
+  rest_call "/aurora/v1/trigger/rebuild" "{\"indexer\":\"${REBUILD_INDEXER}\"}" >> "$LOG_FILE" || true
+  echo "[warmup] action-scheduler run" >> "$LOG_FILE"
+  compose_exec wp action-scheduler run --hooks=aurora_ops_dispatch --batches=2 --batch-size=100 >> "$LOG_FILE" 2>&1 || true
+fi
+
 trigger_loop() {
   local end_ts=$(( $(date +%s) + DURATION_SECONDS ))
   while [ $(date +%s) -lt $end_ts ]; do
     if [[ "$OPS_PROFILE" == "full" ]]; then
+      echo "[trigger] rebuild" >> "$LOG_FILE"
+      rest_call "/aurora/v1/trigger/rebuild" "{\"indexer\":\"${REBUILD_INDEXER}\"}" >> "$LOG_FILE"
+
       echo "[trigger] feed-enqueue" >> "$LOG_FILE"
       rest_call "/aurora/v1/trigger/feed-enqueue" "{\"chunk_size\":${FEED_CHUNK_SIZE}}" >> "$LOG_FILE"
 
@@ -54,9 +64,6 @@ trigger_loop() {
 
       echo "[trigger] sweep-leases" >> "$LOG_FILE"
       rest_call "/aurora/v1/trigger/sweep-leases" "{\"channel\":\"${SWEEP_CHANNEL}\"}" >> "$LOG_FILE"
-
-      echo "[trigger] rebuild" >> "$LOG_FILE"
-      rest_call "/aurora/v1/trigger/rebuild" "{\"indexer\":\"${REBUILD_INDEXER}\"}" >> "$LOG_FILE"
     else
       echo "[trigger] repricer-scheduler-tick" >> "$LOG_FILE"
       if [[ "$ONLY_ASSIGNMENT_ID" -gt 0 ]]; then

@@ -43,6 +43,39 @@
 - Repricer run smoke: recent runs complete with `status=success`
 - Stress frontend-only (`OPS_PROFILE=none`) now reports `RESULT=PASS`
 
+## Stress Evidence (2026-03-05)
+
+Command template used:
+
+```bash
+OPS_PROFILE=<none|repricer|full> \
+DURATION=60s WINDOW_MINUTES=5 \
+BASE_URL='http://localhost' HOME_PATH='/' \
+CATEGORY_PATH='/?product_cat=senza-categoria' \
+PRODUCT_PATH='/?product=aurora-stress-reprice-fixture' \
+SEARCH_PATH='/?s=test' \
+./tools/stress/run.sh
+```
+
+### OPS_PROFILE=none (2 runs)
+- `tools/stress/out/20260305-123949/report.txt` -> `RESULT=FAIL`, `home_p99=2788.16795`, `k6_exit_code=99`
+- `tools/stress/out/20260305-124058/report.txt` -> `RESULT=PASS`, `home_p99=32.30006`, `k6_exit_code=0`
+
+### OPS_PROFILE=repricer
+- `tools/stress/out/20260305-130634/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `home_p99=998.07678`, `k6_exit_code=0`
+
+### OPS_PROFILE=full (post-fix)
+- `tools/stress/out/20260305-124507/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `category_p99=37.36519`, `product_p99=1611.398`, `k6_exit_code=0`
+- `tools/stress/out/20260305-130746/report.txt` -> `RESULT=PASS`, `ops_errors=0`, `category_p99=8.38189`, `product_p99=3.03336`, `k6_exit_code=0`
+
+Notes:
+- `ops_errors=2` from `tools/stress/out/20260304-222151/report.txt` was traced to:
+  - `feed_run` payload missing `run_id`
+  - `feed_enqueue` snapshot mismatch before rebuild alignment
+- Fixes applied:
+  - `src/Ops/Ops_Run_Manager.php`: inject `run_id` into scheduled payload
+  - `tools/stress/ops.sh`: full profile warmup rebuild + rebuild-first trigger order, default `REBUILD_INDEXER=all`
+
 ## Fixes Closed in this iteration
 
 1. Stress profile `none` falsely failing on ops errors:

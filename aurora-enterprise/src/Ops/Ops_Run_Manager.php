@@ -32,6 +32,8 @@ class Ops_Run_Manager {
             return new WP_Error( 'aurora_ops_run_create_failed', 'Unable to create ops run row.', [ 'status' => 500 ] );
         }
 
+        $payload['run_id'] = $runId;
+
         $args  = [
             [
                 'run_id'  => $runId,
