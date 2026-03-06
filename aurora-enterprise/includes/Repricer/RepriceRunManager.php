@@ -267,6 +267,8 @@ class RepriceRunManager {
             'rounding_step'      => isset( $payload['rounding_step'] ) ? max( 0.0, (float) $payload['rounding_step'] ) : 0.0,
             'max_raise_pct'      => isset( $payload['max_raise_pct'] ) ? max( 0.0, (float) $payload['max_raise_pct'] ) : 0.0,
             'max_drop_pct'       => isset( $payload['max_drop_pct'] ) ? max( 0.0, (float) $payload['max_drop_pct'] ) : 0.0,
+            'hard_max_raise_pct' => isset( $payload['hard_max_raise_pct'] ) ? max( 0.0, (float) $payload['hard_max_raise_pct'] ) : 0.0,
+            'hard_max_drop_pct'  => isset( $payload['hard_max_drop_pct'] ) ? max( 0.0, (float) $payload['hard_max_drop_pct'] ) : 0.0,
             'beat_delta_abs'     => isset( $payload['beat_delta_abs'] ) ? max( 0.0, (float) $payload['beat_delta_abs'] ) : 0.0,
             'beat_delta_pct'     => isset( $payload['beat_delta_pct'] ) ? max( 0.0, (float) $payload['beat_delta_pct'] ) : 0.0,
             'target_margin_percent' => isset( $payload['target_margin_percent'] ) ? (float) $payload['target_margin_percent'] : null,
@@ -287,7 +289,7 @@ class RepriceRunManager {
     private function apply_payload_overrides( array $config, array $payload ) : array {
         $numericKeys = [
             'max_products', 'chunk_size', 'timebox_seconds', 'min_margin_percent', 'min_margin_abs',
-            'memory_guard_ratio', 'rounding_step', 'max_raise_pct', 'max_drop_pct', 'beat_delta_abs',
+            'memory_guard_ratio', 'rounding_step', 'max_raise_pct', 'max_drop_pct', 'hard_max_raise_pct', 'hard_max_drop_pct', 'beat_delta_abs',
             'beat_delta_pct', 'target_margin_percent', 'target_margin_abs', 'competitor_price',
             'min_price', 'max_price', 'map_price',
         ];
@@ -676,6 +678,10 @@ class RepriceRunManager {
 
         $old = (float) $decision['old_price'];
         $new = (float) $decision['new_price'];
+        $hardGuardError = $this->validate_hard_price_guard( $productId, $old, $new, $config );
+        if ( null !== $hardGuardError ) {
+            return [ 'decision' => $decision, 'error' => $hardGuardError ];
+        }
 
         $ok1 = update_post_meta( $productId, '_price', $new );
         $ok2 = update_post_meta( $productId, '_regular_price', $new );
@@ -689,6 +695,39 @@ class RepriceRunManager {
         $decision['new_price_applied_to']   = $new;
 
         return [ 'decision' => $decision, 'error' => null ];
+    }
+
+    /**
+     * @param array<string,mixed> $config
+     */
+    private function validate_hard_price_guard( int $productId, float $old, float $new, array $config ) : ?string {
+        if ( $old <= 0.0 ) {
+            return null;
+        }
+        $maxRaise = max( 0.0, (float) ( $config['hard_max_raise_pct'] ?? 0.0 ) );
+        $maxDrop  = max( 0.0, (float) ( $config['hard_max_drop_pct'] ?? 0.0 ) );
+        if ( $maxRaise <= 0.0 && $maxDrop <= 0.0 ) {
+            return null;
+        }
+
+        $deltaPct = ( ( $new - $old ) / $old ) * 100.0;
+        if ( $maxRaise > 0.0 && $deltaPct > $maxRaise ) {
+            return sprintf(
+                'Hard price guard triggered: increase %.4f%% > %.4f%% (product_id=%d)',
+                $deltaPct,
+                $maxRaise,
+                $productId
+            );
+        }
+        if ( $maxDrop > 0.0 && $deltaPct < ( -1.0 * $maxDrop ) ) {
+            return sprintf(
+                'Hard price guard triggered: drop %.4f%% > %.4f%% (product_id=%d)',
+                abs( $deltaPct ),
+                $maxDrop,
+                $productId
+            );
+        }
+        return null;
     }
 
     /**

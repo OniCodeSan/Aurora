@@ -1447,6 +1447,8 @@ class Ops_Controller {
             'rounding_step' => [ 0.0, 1000000.0 ],
             'max_raise_pct' => [ 0.0, 1000.0 ],
             'max_drop_pct' => [ 0.0, 1000.0 ],
+            'hard_max_raise_pct' => [ 0.0, 1000.0 ],
+            'hard_max_drop_pct' => [ 0.0, 1000.0 ],
             'beat_delta_abs' => [ 0.0, 1000000.0 ],
             'beat_delta_pct' => [ 0.0, 1000.0 ],
             'target_margin_percent' => [ 0.0, 1000.0 ],
@@ -1462,6 +1464,19 @@ class Ops_Controller {
                 continue;
             }
             $payload[ $key ] = $this->float_param( $request, $key, 0.0, (float) $range[0], (float) $range[1] );
+        }
+
+        if ( ! array_key_exists( 'hard_max_raise_pct', $payload ) ) {
+            $aliasRaise = $request->get_param( 'max_increase_pct' );
+            if ( null !== $aliasRaise && '' !== $aliasRaise ) {
+                $payload['hard_max_raise_pct'] = $this->float_param( $request, 'max_increase_pct', 0.0, 0.0, 1000.0 );
+            }
+        }
+        if ( ! array_key_exists( 'hard_max_drop_pct', $payload ) ) {
+            $aliasDrop = $request->get_param( 'max_decrease_pct' );
+            if ( null !== $aliasDrop && '' !== $aliasDrop ) {
+                $payload['hard_max_drop_pct'] = $this->float_param( $request, 'max_decrease_pct', 0.0, 0.0, 1000.0 );
+            }
         }
 
         return $payload;

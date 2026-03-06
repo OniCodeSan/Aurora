@@ -59,13 +59,30 @@ class RepriceRuleRepository {
             $this->db->prepare(
                 "SELECT * FROM {$this->table}
                  WHERE is_enabled = 1
-                 ORDER BY priority ASC, id ASC
+                 ORDER BY id ASC
                  LIMIT %d",
                 max( 1, $limit )
             ),
             ARRAY_A
         ) ?: [];
-        return array_values( array_filter( array_map( [ $this, 'normalize_row' ], $rows ) ) );
+        $normalized = array_values( array_filter( array_map( [ $this, 'normalize_row' ], $rows ) ) );
+        usort(
+            $normalized,
+            function ( array $left, array $right ) : int {
+                $leftSpecificity  = $this->scope_specificity_rank( $left );
+                $rightSpecificity = $this->scope_specificity_rank( $right );
+                if ( $leftSpecificity !== $rightSpecificity ) {
+                    return $leftSpecificity <=> $rightSpecificity;
+                }
+                $leftPriority  = (int) ( $left['priority'] ?? 0 );
+                $rightPriority = (int) ( $right['priority'] ?? 0 );
+                if ( $leftPriority !== $rightPriority ) {
+                    return $leftPriority <=> $rightPriority;
+                }
+                return (int) ( $left['id'] ?? 0 ) <=> (int) ( $right['id'] ?? 0 );
+            }
+        );
+        return $normalized;
     }
 
     /**
@@ -196,5 +213,31 @@ class RepriceRuleRepository {
             [ '%d', '%s', '%d', '%s', '%s', '%s' ]
         );
     }
-}
 
+    /**
+     * Lower value = evaluated earlier, higher value = wins on overlap.
+     */
+    private function scope_specificity_rank( array $row ) : int {
+        $rule = is_array( $row['rule_json'] ?? null ) ? $row['rule_json'] : [];
+        $scope = is_array( $rule['scope'] ?? null ) ? $rule['scope'] : [];
+
+        $hasProducts   = ! empty( $scope['product_ids'] ) && is_array( $scope['product_ids'] );
+        $hasCategories = ! empty( $scope['category_ids'] ) && is_array( $scope['category_ids'] );
+        $hasBrands     = ! empty( $scope['brand_ids'] ) && is_array( $scope['brand_ids'] );
+        $hasSuppliers  = ! empty( $scope['supplier_ids'] ) && is_array( $scope['supplier_ids'] );
+
+        if ( $hasProducts ) {
+            return 4;
+        }
+        if ( $hasCategories ) {
+            return 3;
+        }
+        if ( $hasBrands ) {
+            return 2;
+        }
+        if ( $hasSuppliers ) {
+            return 1;
+        }
+        return 0;
+    }
+}

@@ -144,6 +144,8 @@
       timebox_seconds: 10,
       min_margin_percent: 0,
       min_margin_abs: 0,
+      hard_max_raise_pct: 0,
+      hard_max_drop_pct: 0,
     },
     schedulerOnlyAssignmentId: 0,
     rollbackRunIdInput: "",
@@ -467,6 +469,24 @@
     const progress = repricer.progress || null;
     const progressStatus = run?.status || "idle";
     const progressValue = progressStatus === "success" ? 100 : (progressStatus === "running" ? 55 : (progressStatus === "requested" ? 15 : (progressStatus === "partial" ? 80 : (progressStatus === "error" ? 100 : 0))));
+    const recentPreviewRows = collectDecisionRows(repricer).slice(0, 5);
+    const recentPreviewTable = recentPreviewRows.length
+      ? `<table class="widefat striped aurora-repricer-preview-table">
+          <thead><tr><th>Prodotto</th><th class="num">Prima</th><th class="num">Dopo</th><th>Regola</th></tr></thead>
+          <tbody>
+            ${recentPreviewRows
+              .map(
+                (row) => `<tr>
+                  <td>#${esc(row.product_id)}</td>
+                  <td class="num">${esc(row.old_price ?? "-")}</td>
+                  <td class="num">${esc(row.new_price ?? "-")}</td>
+                  <td>${esc(row.rule_applied || "-")}</td>
+                </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>`
+      : '<p class="aurora-repricer-empty">Nessuna decisione recente disponibile per preview prima→dopo.</p>';
 
     return `
       <section class="aurora-repricer-section" id="aurora-guided-run">
@@ -509,7 +529,10 @@
               <div class="aurora-repricer-field"><label for="aurora-timebox">Timebox (s)</label><input id="aurora-timebox" type="number" min="5" max="3600" value="${esc(state.form.timebox_seconds)}"></div>
               <div class="aurora-repricer-field"><label for="aurora-margin-pct">Min margin %</label><input id="aurora-margin-pct" type="number" min="0" max="1000" step="0.1" value="${esc(state.form.min_margin_percent)}"></div>
               <div class="aurora-repricer-field"><label for="aurora-margin-abs">Min margin abs</label><input id="aurora-margin-abs" type="number" min="0" max="1000000" step="0.01" value="${esc(state.form.min_margin_abs)}"></div>
+              <div class="aurora-repricer-field"><label for="aurora-hard-max-raise">Hard max increase %</label><input id="aurora-hard-max-raise" type="number" min="0" max="1000" step="0.1" value="${esc(state.form.hard_max_raise_pct)}"></div>
+              <div class="aurora-repricer-field"><label for="aurora-hard-max-drop">Hard max decrease %</label><input id="aurora-hard-max-drop" type="number" min="0" max="1000" step="0.1" value="${esc(state.form.hard_max_drop_pct)}"></div>
             </div>
+            <p class="aurora-repricer-help">Se impostati, i limiti hard bloccano APPLY quando una variazione supera la soglia.</p>
           </details>
         </div>
 
@@ -529,6 +552,8 @@
             </dl>
             <progress max="100" value="${esc(progressValue)}" style="width:100%; height:10px;"></progress>
             <p class="aurora-repricer-help">Link rapido: <a href="#aurora-decisioni">Vedi decisioni</a></p>
+            <h4 style="margin:12px 0 8px;">Preview prima→dopo (ultime decisioni)</h4>
+            ${recentPreviewTable}
           </div>
         </div>
       </section>
@@ -1321,6 +1346,8 @@
     bindNumeric("aurora-timebox", "timebox_seconds", 5, 3600);
     bindNumeric("aurora-margin-pct", "min_margin_percent", 0, 1000);
     bindNumeric("aurora-margin-abs", "min_margin_abs", 0, 1000000);
+    bindNumeric("aurora-hard-max-raise", "hard_max_raise_pct", 0, 1000);
+    bindNumeric("aurora-hard-max-drop", "hard_max_drop_pct", 0, 1000);
 
     const previewBtn = document.getElementById("aurora-preview-payload");
     if (previewBtn) {
@@ -1361,6 +1388,8 @@
           timebox_seconds: Number(state.form.timebox_seconds),
           min_margin_percent: Number(state.form.min_margin_percent),
           min_margin_abs: Number(state.form.min_margin_abs),
+          hard_max_raise_pct: Number(state.form.hard_max_raise_pct),
+          hard_max_drop_pct: Number(state.form.hard_max_drop_pct),
           dry_run: !isApply,
         };
 
